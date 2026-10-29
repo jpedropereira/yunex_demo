@@ -191,14 +191,37 @@ committed defaults match `.env.example`. Copy it to `.env` to override:
 cp .env.example .env
 ```
 
-Published host ports are configurable, since `8000` in particular is heavily
-contested on dev machines:
+### Ports: two different numbers for the same service
 
-| Variable | Default | Service |
+Each service has an **inside** port (what it listens on within the compose
+network, where the app reaches it) and a **published** port (what's exposed on
+your machine). For Chroma these deliberately differ:
+
+| Service | From your host | From inside the network | Why |
+|---|---|---|---|
+| Streamlit | `http://localhost:8501` | — | |
+| **ChromaDB** | `http://localhost:8100` | `chroma:8000` | host `8000` is the most contested port on a dev machine |
+| Ollama | `http://localhost:11434` | `ollama:11434` | |
+
+So Chroma **is** on 8000 — just not on *your* 8000. Reach it from the host at
+<http://localhost:8100> (e.g. `curl localhost:8100/api/v2/heartbeat`); the app,
+`make health`, and the Stack Health page all go through the network and need no
+change either way. `make test-live` runs from the host, which is why it passes
+`CHROMA_PORT=8100` explicitly.
+
+Both sides are configurable, but they are **not interchangeable**:
+
+| Variable | Default | Which side |
 |---|---|---|
-| `APP_PUBLISHED_PORT` | `8501` | Streamlit |
-| `CHROMA_PUBLISHED_PORT` | `8100` | ChromaDB (container-internal stays `8000`) |
-| `OLLAMA_PUBLISHED_PORT` | `11434` | Ollama |
+| `APP_PUBLISHED_PORT` | `8501` | host → Streamlit |
+| `CHROMA_PUBLISHED_PORT` | `8100` | host → Chroma |
+| `OLLAMA_PUBLISHED_PORT` | `11434` | host → Ollama |
+| `CHROMA_PORT` | `8000` | **app → Chroma, inside the network** |
+
+> Don't "fix" a host collision by changing `CHROMA_PORT`. That's the port the
+> app dials *inside* the network, where nothing else competes for it — setting
+> it to `8100` points the app at a port no container is listening on. Change
+> `CHROMA_PUBLISHED_PORT` instead, which only affects host access.
 
 ---
 
@@ -299,6 +322,8 @@ Symptoms seen while building this, and what each actually means.
 | Stack Health: `missing: gemma4:...` | `model-init` hasn't finished or failed | `make pull`. Briefly expected after a bare `docker compose up`, which pulls concurrently with the app — `make up` blocks until it's done |
 | `model-init: set: Illegal option -` | CRLF line endings on `docker/*.sh` | `.gitattributes` was removed or git forces CRLF. `git config core.autocrlf false`, then re-checkout |
 | `Bind for 0.0.0.0:8000 failed: port is already allocated` | another service owns that host port | set `CHROMA_PUBLISHED_PORT` (or `APP_`/`OLLAMA_`) in `.env` |
+| `curl localhost:8000` to Chroma refuses, or hits something else entirely | Chroma is published on **8100**, not 8000 | use <http://localhost:8100>. See [Ports](#ports-two-different-numbers-for-the-same-service) |
+| App can't reach Chroma after an `.env` edit | `CHROMA_PORT` changed instead of `CHROMA_PUBLISHED_PORT` | `CHROMA_PORT` must stay `8000` — it's the in-network port |
 | `could not select device driver "nvidia"` | `nvidia-container-toolkit` missing | `make up-gpu` falls back to CPU automatically; raw `docker compose -f ... gpu.yaml` does not |
 | Acceleration row says **CPU** but you ran `up-gpu` | the toolkit is missing and it fell back | expected — the row reports what Ollama really loaded, not the profile you asked for. See [Linux + NVIDIA](#linux--nvidia) |
 | `external` profile: `Connection refused` | host Ollama bound to `127.0.0.1` | start it as `OLLAMA_HOST=0.0.0.0:11434 ollama serve` |
