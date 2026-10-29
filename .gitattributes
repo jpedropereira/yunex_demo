@@ -1,0 +1,11 @@
+# Normalize all text to LF in the repo AND on checkout, including on Windows
+# (where core.autocrlf=true is the default).
+#
+# This is not cosmetic. docker/*.sh is bind-mounted into Linux containers and
+# executed by /bin/sh; with CRLF endings `set -eu` becomes `set -eu<CR>` and the
+# script dies immediately with "set: Illegal option -", so model provisioning
+# silently never runs. Verified by running a CRLF copy in the ollama image.
+* text=auto eol=lf
+
+# Keep the lockfile byte-stable across platforms.
+uv.lock -text

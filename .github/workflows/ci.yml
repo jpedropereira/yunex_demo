@@ -1,0 +1,38 @@
+# Runs the *same* .pre-commit-config.yaml as the local hooks (via
+# pre-commit/action) rather than re-declaring lint rules here, so CI and local
+# enforcement cannot drift apart. It exists because local hooks only protect
+# contributors who ran `pre-commit install` and never passed `--no-verify`.
+#
+# Python 3.12 matches .python-version and docker/app.Dockerfile. The package
+# lives at the repo root, so no working-directory override is needed.
+#
+# Note: no service containers here. The test suite's live-stack checks skip
+# themselves when Ollama and Chroma are unreachable, so CI verifies config,
+# page rendering, and lint without pulling 4.6GB of models.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Run pre-commit hooks
+        uses: pre-commit/action@v3.0.1
+
+      - name: Run full test suite
+        run: uv run pytest tests -q

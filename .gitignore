@@ -1,0 +1,37 @@
+# Secrets & environment
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+build/
+dist/
+
+# NOTE: .python-version is deliberately NOT ignored. It pins 3.12, which
+# docker/app.Dockerfile and .github/workflows/ci.yml both depend on, so it
+# must stay tracked.
+
+# Tooling caches
+.ruff_cache/
+.pytest_cache/
+.testmondata
+.coverage
+htmlcov/
+
+# Local demo data
+data/chroma/
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Claude Code -- the committed settings.json is intentional; only the
+# machine-local override is ignored.
+.claude/settings.local.json
