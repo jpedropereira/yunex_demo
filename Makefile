@@ -30,11 +30,11 @@ _up_local:
 	$(COMPOSE) $(COMPOSE_FILES) run --rm model-init
 	$(COMPOSE) $(COMPOSE_FILES) up -d --build --wait app
 
-up: ## Start the stack on CPU (default; first run downloads ~4.6GB of models)
+up: ## Start on CPU -- works anywhere (first run downloads ~4.6GB of models)
 	@$(MAKE) --no-print-directory _up_local
 	@echo "Ready: http://localhost:$(APP_PORT)  (open Stack Health first)"
 
-up-gpu: ## Start the stack with NVIDIA GPU acceleration (falls back to CPU if unavailable)
+up-gpu: ## Start with NVIDIA GPU -- preferred if you have a card (falls back to CPU)
 	@if ./docker/preflight-gpu.sh; then \
 		$(MAKE) --no-print-directory _up_local COMPOSE_FILES="$(GPU_FILES)" && \
 		echo "Ready: http://localhost:$(APP_PORT)" && \

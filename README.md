@@ -18,21 +18,38 @@ no data leaving the laptop.
 
 ## Quick start
 
-```bash
-docker compose up -d     # CPU, everything in Docker. Works anywhere.
-```
+Pick the command matching your hardware. All three serve the same app and
+differ only in *where inference runs*.
+
+| Your machine | Command | One-time setup needed |
+|---|---|---|
+| **NVIDIA GPU** — Linux or Windows/WSL2 | `make up-gpu` | Linux only: [install the toolkit](#linux--nvidia) |
+| **Apple Silicon Mac** | `make up-external` | [`brew install ollama`](#macos) |
+| **No GPU**, or you just want it running | `make up` | none |
+
+**If you have an NVIDIA card, use `make up-gpu`.** GPU inference is far faster
+than CPU, and that gap compounds: a workflow makes several LLM calls back to
+back, so seconds of per-call latency become tens of seconds of dead air on
+stage. Prefer it whenever it's available to you.
+
+> **`make up-gpu` is a request, not a guarantee.** Without
+> `nvidia-container-toolkit` on the host it detects the problem, warns, and
+> falls back to CPU — you get a working stack with no speedup. **Confirm it
+> actually engaged** via the *Acceleration* row on Stack Health, which reports
+> what Ollama really loaded onto the device rather than what you asked for.
+> See [Linux + NVIDIA](#linux--nvidia) for the one-time install.
 
 Then open <http://localhost:8501> and run **Stack Health** first.
 
-`make up` does the same thing and is worth preferring, but only because it adds
-two things Compose can't express: it runs the model pull in the **foreground**
-(so you see progress on the first 4.6 GB download, and "Ready" means the models
-are actually there), and `make up-gpu` falls back to CPU instead of erroring
-when `nvidia-container-toolkit` is missing. Everything else in the Makefile is
-convenience — run `make help` for the list.
-
 First run downloads **~4.6 GB** of model weights, so give it time on slow wifi.
 Weights persist in a Docker volume, so later starts are fast.
+
+Plain Compose works too (`docker compose up -d`), and is the fallback where
+`make` isn't available, such as native Windows. The Makefile is worth
+preferring for two things Compose can't express: the GPU fallback above, and
+running the model pull in the **foreground**, so you see download progress and
+"Ready" means the models are genuinely present. Everything else in it is
+convenience — `make help` lists the lot.
 
 ---
 
@@ -43,9 +60,9 @@ lives*, and nothing else — same image, same code.
 
 | Command | Ollama runs | GPU | Use when |
 |---|---|---|---|
-| `make up` (or `docker compose up -d`) | container | no | anywhere; zero host setup |
-| `make up-gpu` | container | yes (NVIDIA) | Linux with the toolkit installed, or Windows/WSL2 |
-| `make up-external` | on the host | yes | **macOS**, or you already run Ollama natively |
+| `make up-gpu` | container | **yes** (NVIDIA) | **preferred** — Linux with the toolkit, or Windows/WSL2 |
+| `make up-external` | on the host | **yes** | **macOS**, or you already run Ollama natively |
+| `make up` (or `docker compose up -d`) | container | no | no GPU available; zero host setup |
 
 ### Linux + NVIDIA
 
@@ -138,18 +155,24 @@ Working set is roughly 6.5 GB with Chroma and Streamlit included.
 MODEL_MAIN=gemma3:1b-it-qat
 ```
 
-### CPU is slow but workable — and that is part of the point
+### CPU is a usable fallback — and that is part of the point
 
-Schema-constrained extraction emits only ~100–250 output tokens, which keeps
-CPU inference tolerable. Measured with `make health` on this stack:
+Use a GPU if you have one. But CPU stays viable, which is what makes the demo
+portable to any attendee's laptop: schema-constrained extraction emits only
+~100–250 output tokens, so the slow path is slow-but-tolerable rather than
+unusable. Measured with `make health` on this stack:
 
 | Hardware | Throughput | ~200-token extraction |
 |---|---|---|
 | i7-13700K, 24 threads, CPU only | **42 tok/s** | ~5 s |
 | typical 8-core laptop CPU (estimated) | ~12–15 tok/s | ~15 s |
 
-Run `make health` on your own machine for a real number rather than trusting
-the estimate. The infrastructure leans into the slow case:
+These are CPU-only figures, and they are the *floor* — a GPU run is
+substantially quicker. Run `make health` on your own machine for a real number
+rather than trusting any estimate here; the *Generation speed* row gives you
+tok/s and *Acceleration* tells you which path you actually got.
+
+The infrastructure leans into the slow case so CPU stays presentable:
 
 - `OLLAMA_KEEP_ALIVE=-1` — weights never unload mid-presentation.
 - `make warm` — preloads both models so the first on-stage call isn't cold.
@@ -182,9 +205,9 @@ contested on dev machines:
 ## Commands
 
 ```
-make up            Start on CPU (default)
-make up-gpu        Start with NVIDIA acceleration
+make up-gpu        Start with NVIDIA acceleration (preferred, if you have a card)
 make up-external   Start against a host Ollama (macOS)
+make up            Start on CPU (works anywhere, no host setup)
 make pull          Provision models ahead of time — do this before the event
 make warm          Load models into memory before presenting
 make health        Run the full stack check headlessly; non-zero exit on failure
@@ -281,7 +304,7 @@ Symptoms seen while building this, and what each actually means.
 | `external` profile: `Connection refused` | host Ollama bound to `127.0.0.1` | start it as `OLLAMA_HOST=0.0.0.0:11434 ollama serve` |
 | `time: missing unit in duration "-1"` | `OLLAMA_KEEP_ALIVE` set to a non-numeric string | use seconds (`-1`, `300`) or a Go duration (`5m`) |
 | Generation speed check fails, "too few tokens" | the model stopped early | a measurement guard, not a stack failure — a figure from <10 tokens isn't meaningful |
-| Everything works but feels slow | CPU inference | `make warm` before presenting; on 8GB set `MODEL_MAIN=gemma3:1b-it-qat`. See [CPU is slow but workable](#cpu-is-slow-but-workable--and-that-is-part-of-the-point) |
+| Everything works but feels slow | CPU inference | `make warm` before presenting; on 8GB set `MODEL_MAIN=gemma3:1b-it-qat`. See [CPU is slow but workable](#cpu-is-a-usable-fallback--and-that-is-part-of-the-point) |
 | Page edits don't show up | edited outside the bind mount | only `./src` is mounted; anything else needs a rebuild |
 
 ---
