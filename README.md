@@ -81,16 +81,43 @@ Ollama is permanently CPU-only there. Run Ollama natively instead:
 
 ```bash
 brew install ollama
-ollama serve                       # in its own terminal
+OLLAMA_HOST=0.0.0.0:11434 ollama serve   # in its own terminal -- see note below
 ollama pull gemma4:e2b-it-qat
 ollama pull embeddinggemma-2:270m
-make up-external                   # Chroma + Streamlit in Docker, Ollama on the host
+make up-external                         # Chroma + Streamlit in Docker, Ollama on the host
 ```
 
-### Windows / WSL2
+`OLLAMA_HOST=0.0.0.0:11434` matters. Ollama binds to `127.0.0.1` by default,
+and `host.docker.internal` reaches the host on a gateway address rather than
+loopback — so a default-bound Ollama refuses the container's connection. The
+same applies to a native Ollama on Windows. (The `external` profile was
+verified on Linux, where the container Ollama already published on `0.0.0.0`;
+the loopback case is the one to watch for on Docker Desktop.)
 
-`make up-gpu` works on the host NVIDIA driver alone — no in-container toolkit
-needed.
+### Windows
+
+**Use the WSL2 backend** (Docker Desktop's default). Inside a WSL2 shell
+everything works as on Linux, `make` included, and `make up-gpu` gets the GPU
+from the host NVIDIA driver alone — no in-container toolkit install needed.
+
+From **native PowerShell or cmd** the stack still runs, but the Makefile does
+not: it needs GNU `make` plus `grep`/`awk`, and `docker/preflight-gpu.sh` needs
+a POSIX shell. Use Compose directly:
+
+```powershell
+docker compose up -d                                        # CPU
+docker compose -f compose.yaml -f compose.gpu.yaml up -d     # NVIDIA
+```
+
+The GPU variant skips the preflight check, so if `nvidia-container-toolkit`
+isn't available you'll get Docker's raw
+`could not select device driver "nvidia"` error instead of an automatic CPU
+fallback.
+
+`.gitattributes` forces LF checkout on Windows. Don't remove it: `docker/*.sh`
+is bind-mounted into Linux containers and run by `/bin/sh`, and with CRLF
+endings `set -eu` becomes `set -eu<CR>`, so provisioning dies with
+`set: Illegal option -` and no models get pulled.
 
 ---
 
