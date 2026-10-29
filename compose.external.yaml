@@ -6,10 +6,10 @@
 # GPU, so a containerised Ollama is permanently CPU-only there. Running Ollama
 # natively (`brew install ollama && ollama serve`) gets the GPU back.
 
-# Note: do NOT add `--profile local-llm` to this override. Compose *appends*
-# to list fields rather than replacing them, so the profile list below becomes
-# ["local-llm", "disabled"] and that flag would switch these services back on.
-# `make up-external` deliberately passes no profile flag.
+# How the exclusion works: compose.yaml puts no profile on these services, so
+# they normally start. Assigning them a profile here makes them opt-in only,
+# and "disabled" is never activated -- so they are skipped. Don't pass
+# `--profile disabled`, which would switch them back on.
 services:
   # An unactivated profile keeps these out of the run entirely.
   ollama:

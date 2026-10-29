@@ -19,10 +19,17 @@ no data leaving the laptop.
 ## Quick start
 
 ```bash
-make up          # CPU, everything in Docker. Works anywhere.
+docker compose up -d     # CPU, everything in Docker. Works anywhere.
 ```
 
 Then open <http://localhost:8501> and run **Stack Health** first.
+
+`make up` does the same thing and is worth preferring, but only because it adds
+two things Compose can't express: it runs the model pull in the **foreground**
+(so you see progress on the first 4.6 GB download, and "Ready" means the models
+are actually there), and `make up-gpu` falls back to CPU instead of erroring
+when `nvidia-container-toolkit` is missing. Everything else in the Makefile is
+convenience — run `make help` for the list.
 
 First run downloads **~4.6 GB** of model weights, so give it time on slow wifi.
 Weights persist in a Docker volume, so later starts are fast.
@@ -36,7 +43,7 @@ lives*, and nothing else — same image, same code.
 
 | Command | Ollama runs | GPU | Use when |
 |---|---|---|---|
-| `make up` | container | no | anywhere; zero host setup |
+| `make up` (or `docker compose up -d`) | container | no | anywhere; zero host setup |
 | `make up-gpu` | container | yes (NVIDIA) | Linux with the toolkit installed, or Windows/WSL2 |
 | `make up-external` | on the host | yes | **macOS**, or you already run Ollama natively |
 

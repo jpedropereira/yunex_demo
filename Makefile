@@ -9,7 +9,6 @@ COMPOSE      := docker compose
 COMPOSE_FILES ?=
 GPU_FILES    := -f compose.yaml -f compose.gpu.yaml
 EXT_FILES    := -f compose.yaml -f compose.external.yaml
-LOCAL_LLM    := --profile local-llm
 APP_PORT     ?= 8501
 CHROMA_PORT  ?= 8100
 OLLAMA_PORT  ?= 11434
@@ -27,9 +26,9 @@ help: ## Show available targets
 # which would print "Ready" while Stack Health still fails. Running it in the
 # foreground also shows download progress, which matters on a 4.6GB first run.
 _up_local:
-	$(COMPOSE) $(COMPOSE_FILES) $(LOCAL_LLM) up -d --wait ollama chroma
-	$(COMPOSE) $(COMPOSE_FILES) $(LOCAL_LLM) run --rm model-init
-	$(COMPOSE) $(COMPOSE_FILES) $(LOCAL_LLM) up -d --build --wait app
+	$(COMPOSE) $(COMPOSE_FILES) up -d --wait ollama chroma
+	$(COMPOSE) $(COMPOSE_FILES) run --rm model-init
+	$(COMPOSE) $(COMPOSE_FILES) up -d --build --wait app
 
 up: ## Start the stack on CPU (default; first run downloads ~4.6GB of models)
 	@$(MAKE) --no-print-directory _up_local
@@ -51,8 +50,8 @@ up-external: ## Start the stack against an Ollama running on the host (macOS pat
 	@echo "Ready: http://localhost:$(APP_PORT)"
 
 pull: ## Provision models ahead of time (do this before the event, on good wifi)
-	$(COMPOSE) $(LOCAL_LLM) up -d --wait ollama
-	$(COMPOSE) $(LOCAL_LLM) run --rm model-init
+	$(COMPOSE) up -d --wait ollama
+	$(COMPOSE) run --rm model-init
 
 warm: ## Load models into memory so the first on-stage call is not cold
 	$(COMPOSE) exec -T app python -m yunex_demo.warm
@@ -61,16 +60,16 @@ health: ## Run the full stack check headlessly (exits non-zero on failure)
 	$(COMPOSE) exec -T app python -m yunex_demo.health
 
 logs: ## Tail logs from every service
-	$(COMPOSE) $(LOCAL_LLM) logs -f --tail=100
+	$(COMPOSE) logs -f --tail=100
 
 ps: ## Show service status
-	$(COMPOSE) $(LOCAL_LLM) ps
+	$(COMPOSE) ps
 
 down: ## Stop the stack (keeps models and vector data)
-	$(COMPOSE) $(LOCAL_LLM) down --remove-orphans
+	$(COMPOSE) down --remove-orphans
 
 clean: ## Stop and delete all volumes -- re-downloads models on next up
-	$(COMPOSE) $(LOCAL_LLM) down -v --remove-orphans
+	$(COMPOSE) down -v --remove-orphans
 
 lint: ## Format and lint
 	uv run ruff format .

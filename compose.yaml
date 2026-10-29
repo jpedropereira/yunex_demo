@@ -11,9 +11,9 @@ x-model-env: &model-env
 services:
   ollama:
     image: ollama/ollama:0.40.13
-    # `local-llm` is activated by the Makefile for the cpu/gpu paths, and left
-    # off by compose.external.yaml so no container competes with host Ollama.
-    profiles: ["local-llm"]
+    # Deliberately NOT behind a profile: a bare `docker compose up` must bring
+    # up a working stack. compose.external.yaml gates this off on its own by
+    # adding an inactive profile, so no gate is needed here.
     environment:
       # -1 keeps weights resident, so nothing unloads mid-presentation.
       OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:--1}
@@ -32,7 +32,6 @@ services:
 
   model-init:
     image: ollama/ollama:0.40.13
-    profiles: ["local-llm"]
     depends_on:
       ollama:
         condition: service_healthy
