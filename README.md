@@ -214,6 +214,78 @@ passes, the whole chain is genuinely wired up.
 
 ---
 
+## Verifying the setup
+
+### The stack
+
+```bash
+make health      # all five checks; exits non-zero on failure
+make test-live   # 14 tests against the running stack
+```
+
+Or open <http://localhost:8501> → **Stack Health** → *Run checks*. Watch the
+**Embed/store/query round trip** row: it's the only check that proves Ollama,
+the embedder, and Chroma work *together* rather than just being individually
+reachable.
+
+To prove it works the way a fresh clone would experience it:
+
+```bash
+make clean && make up    # deletes volumes, re-downloads ~4.6GB, ~2 min
+make health
+```
+
+### The `.env` deny rule
+
+This one needs a **fresh Claude Code session** — permission config loads at
+session start, so the session that wrote the rule cannot verify it.
+
+```bash
+printf 'DENY_RULE_CANARY=this-is-not-a-real-secret\n' > .env
+```
+
+Then start a new `claude` session in this directory and try all three:
+
+| Ask | Expected |
+|---|---|
+| "read .env" | **blocked** by permissions |
+| "grep for DENY_RULE_CANARY" | **blocked** |
+| "read .env.example" | **works**, contents returned |
+
+Pass means the canary value never appears in a reply. `/permissions` lists the
+loaded rules if you want a quicker sanity check. Delete the `.env` afterwards.
+
+Two things that look like failures but aren't:
+
+- **`cat .env` via Bash is not blocked, by design.** It's the most natural way
+  to try testing this and it will succeed. A path-glob rule on `Read`/`Grep`
+  can't reliably separate `cat .env` from safe shell commands, so only those two
+  tools are covered.
+- **The `.env` must be inside the project tree.** The glob resolves relative to
+  the working directory, so one in `/tmp` won't match even with a correct rule —
+  indistinguishable from the rule not working.
+
+---
+
+## Troubleshooting
+
+Symptoms seen while building this, and what each actually means.
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Stack Health: `missing: gemma4:...` | `model-init` hasn't finished or failed | `make pull`. Briefly expected after a bare `docker compose up`, which pulls concurrently with the app — `make up` blocks until it's done |
+| `model-init: set: Illegal option -` | CRLF line endings on `docker/*.sh` | `.gitattributes` was removed or git forces CRLF. `git config core.autocrlf false`, then re-checkout |
+| `Bind for 0.0.0.0:8000 failed: port is already allocated` | another service owns that host port | set `CHROMA_PUBLISHED_PORT` (or `APP_`/`OLLAMA_`) in `.env` |
+| `could not select device driver "nvidia"` | `nvidia-container-toolkit` missing | `make up-gpu` falls back to CPU automatically; raw `docker compose -f ... gpu.yaml` does not |
+| Acceleration row says **CPU** but you ran `up-gpu` | the toolkit is missing and it fell back | expected — the row reports what Ollama really loaded, not the profile you asked for. See [Linux + NVIDIA](#linux--nvidia) |
+| `external` profile: `Connection refused` | host Ollama bound to `127.0.0.1` | start it as `OLLAMA_HOST=0.0.0.0:11434 ollama serve` |
+| `time: missing unit in duration "-1"` | `OLLAMA_KEEP_ALIVE` set to a non-numeric string | use seconds (`-1`, `300`) or a Go duration (`5m`) |
+| Generation speed check fails, "too few tokens" | the model stopped early | a measurement guard, not a stack failure — a figure from <10 tokens isn't meaningful |
+| Everything works but feels slow | CPU inference | `make warm` before presenting; on 8GB set `MODEL_MAIN=gemma3:1b-it-qat`. See [CPU is slow but workable](#cpu-is-slow-but-workable--and-that-is-part-of-the-point) |
+| Page edits don't show up | edited outside the bind mount | only `./src` is mounted; anything else needs a rebuild |
+
+---
+
 ## Layout
 
 ```
