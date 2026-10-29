@@ -1,0 +1,26 @@
+# Point the app at an Ollama running on the host instead of in a container.
+#   docker compose -f compose.yaml -f compose.external.yaml up -d
+# or just `make up-external`.
+#
+# This is the required path on macOS: Docker has no route to the Apple Silicon
+# GPU, so a containerised Ollama is permanently CPU-only there. Running Ollama
+# natively (`brew install ollama && ollama serve`) gets the GPU back.
+
+# Note: do NOT add `--profile local-llm` to this override. Compose *appends*
+# to list fields rather than replacing them, so the profile list below becomes
+# ["local-llm", "disabled"] and that flag would switch these services back on.
+# `make up-external` deliberately passes no profile flag.
+services:
+  # An unactivated profile keeps these out of the run entirely.
+  ollama:
+    profiles: ["disabled"]
+
+  model-init:
+    profiles: ["disabled"]
+
+  app:
+    environment:
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+    # Required on Linux; harmless on Docker Desktop, which already resolves it.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

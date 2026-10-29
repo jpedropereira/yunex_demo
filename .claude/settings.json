@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(**/.env)",
+      "Read(**/.env.local)",
+      "Read(**/.env.*.local)",
+      "Read(**/.env.development)",
+      "Read(**/.env.staging)",
+      "Read(**/.env.production)",
+      "Read(**/.env.test)",
+      "Read(**/.env.ci)",
+      "Read(**/.env.dev)",
+      "Read(**/.env.prod)",
+      "Grep(**/.env)",
+      "Grep(**/.env.local)",
+      "Grep(**/.env.*.local)",
+      "Grep(**/.env.development)",
+      "Grep(**/.env.staging)",
+      "Grep(**/.env.production)",
+      "Grep(**/.env.test)",
+      "Grep(**/.env.ci)",
+      "Grep(**/.env.dev)",
+      "Grep(**/.env.prod)"
+    ]
+  }
+}

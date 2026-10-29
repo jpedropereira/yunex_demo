@@ -1,0 +1,47 @@
+[project]
+name = "yunex-demo"
+version = "0.1.0"
+description = "Hackathon demo: reliably extracting, classifying, and acting on data with local LLMs"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "streamlit==1.66.1",
+    "ollama==0.6.3",
+    "chromadb==1.5.9",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.5",
+    "httpx>=0.27",
+]
+
+[dependency-groups]
+dev = [
+    # ruff stands in for black + flake8 + isort + autoflake + pycln: its E/F
+    # rules cover flake8 (at the same 100-char limit), I covers isort, F401
+    # covers the unused-import strippers, and `ruff format` covers black.
+    # Running both stacks would mean two formatters rewriting the same files
+    # and a .flake8 that ruff silently shadows.
+    "ruff>=0.7",
+    "pre-commit>=4.0",
+    "pytest>=8.3",
+    "detect-secrets>=1.5",
+    # Pinned deliberately: a build-system requirement does not get resolved
+    # into uv.lock on its own, so the build backend would otherwise float.
+    "hatchling>=1.25",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/yunex_demo"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

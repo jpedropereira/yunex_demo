@@ -1,0 +1,65 @@
+# Hook chain for this project.
+#
+# Design notes (read before editing):
+# - ruff replaces black + flake8 + isort + autoflake + pycln. Its E/F rules
+#   cover flake8 at the same 100-char limit, I covers isort, F401 covers the
+#   unused-import strippers, and `ruff format` covers black. There is
+#   deliberately no `.flake8` file: it would be silently shadowed by ruff's
+#   config in pyproject.toml, which is exactly the "config that looks live but
+#   isn't" failure this setup exists to avoid.
+# - ruff config lives in pyproject.toml, so the hooks carry no inline `args`
+#   for rules or line length -- one source of truth, no drift.
+# - Hook order matters: ruff-check --fix and ruff-format mutate files, so they
+#   run after the whitespace/EOF fixers and before anything that only reads.
+# - detect-secrets runs on every commit, not just on push: a leaked credential
+#   is worse the longer it is out there, so catch it at the earliest point.
+# - Tests run on both commit and push rather than using a testmon fast path.
+#   The suite is ~0.7s offline, so scoping it would add a cache file and a
+#   dependency to save nothing. Revisit if the suite grows.
+# - The pytest hooks use `language: system`, so `entry` runs against whatever
+#   is on PATH at invocation time. A plain `git commit` does not activate the
+#   project venv, so the entry must call `uv run pytest`, never a bare
+#   `pytest` -- the latter only works by coincidence when pre-commit itself was
+#   invoked through `uv run`.
+# - `pre-commit`/`pre-push` are the current stage names; the old
+#   `commit`/`push` aliases are deprecated.
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: pretty-format-json
+        args: ["--autofix", "--no-sort-keys"]
+      - id: check-added-large-files
+        args: ["--maxkb=512"]
+      - id: check-merge-conflict
+      - id: check-executables-have-shebangs
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.2
+    hooks:
+      - id: ruff-check
+        args: ["--fix"]
+      - id: ruff-format
+
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ["--baseline", ".secrets.baseline"]
+        # A regex, not a glob: literal dots are escaped and the pattern is
+        # anchored to the filename, so it cannot match e.g. "uvXlock" or a
+        # substring buried in a longer path.
+        exclude: (^|/)(package-lock\.json|uv\.lock|poetry\.lock)$
+
+  - repo: local
+    hooks:
+      - id: pytest
+        name: Run tests
+        entry: uv run pytest -q
+        language: system
+        pass_filenames: false
+        stages: [pre-commit, pre-push]

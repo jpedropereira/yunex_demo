@@ -1,0 +1,18 @@
+# NVIDIA GPU override. Use with:
+#   docker compose -f compose.yaml -f compose.gpu.yaml --profile local-llm up -d
+# or just `make up-gpu`.
+#
+# Linux requires a one-time nvidia-container-toolkit install on the host (see
+# README). Windows/WSL2 works on the host driver alone. If the toolkit is
+# missing, Ollama still starts and falls back to CPU -- the Stack Health page's
+# Acceleration row is what tells you which actually happened.
+
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
