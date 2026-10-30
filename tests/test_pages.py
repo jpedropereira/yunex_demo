@@ -20,10 +20,13 @@ from yunex_demo.config import settings
 
 UI_DIR = Path(__file__).resolve().parents[1] / "src" / "yunex_demo" / "ui"
 
+CHATBOT_PAGE = "pages/1_Bare_Chatbot.py"
+
 STUB_PAGES = [
-    "pages/1_One_Off.py",
-    "pages/2_Workflow.py",
-    "pages/3_RAG_Agent.py",
+    "pages/2_One_Off.py",
+    "pages/3_Workflow.py",
+    "pages/4_Embedding_Search.py",
+    "pages/5_RAG_Agent.py",
 ]
 
 
@@ -33,7 +36,7 @@ def _run(relative: str, timeout: int = 180) -> AppTest:
     return app
 
 
-@pytest.mark.parametrize("page", ["Home.py", *STUB_PAGES])
+@pytest.mark.parametrize("page", ["Home.py", CHATBOT_PAGE, *STUB_PAGES])
 def test_page_renders_without_exception(page):
     app = _run(page)
     assert not app.exception, f"{page} raised: {[e.value for e in app.exception]}"
@@ -70,3 +73,15 @@ def test_stack_health_page_runs_every_check():
 
     # One success banner when everything passes, otherwise an error banner.
     assert app.success or app.error, "no overall verdict rendered"
+
+
+@pytest.mark.skipif(not _stack_is_up(), reason="stack not reachable; start it with `make up`")
+def test_bare_chatbot_answers_a_question():
+    """Sends one real message to the model. Skipped when the stack is down."""
+    app = _run(CHATBOT_PAGE)
+    app.chat_input[0].set_value("Reply with one short sentence: what is a traffic light?").run()
+    assert not app.exception, f"chatbot raised: {[e.value for e in app.exception]}"
+    assert not app.error, f"model call failed: {[e.value for e in app.error]}"
+
+    roles = [message.name for message in app.chat_message]
+    assert roles == ["user", "assistant"]
