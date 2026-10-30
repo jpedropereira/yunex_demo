@@ -13,6 +13,31 @@ observability stacks, plugin systems) unless asked.
 
 `README.md` covers setup, commands, and troubleshooting. Don't repeat it here.
 
+## Stack
+
+Everything runs locally: no API keys, no hosted LLM providers. Don't introduce
+a cloud LLM API (OpenAI, Anthropic, etc.) unless asked.
+
+**LLMs** (served by Ollama, names set in `config.py` / `.env`):
+
+| Role | Model | Notes |
+|---|---|---|
+| Generation (`MODEL_MAIN`) | `gemma4:e2b-it-qat` | effective-2B edge model, ~4.3 GB, native function calling |
+| Embeddings (`MODEL_EMBED`) | `embeddinggemma-2:270m` | 768-dim vectors, 8K context |
+| Fallback for 8 GB machines | `gemma3:1b-it-qat` | swap in via `MODEL_MAIN` |
+
+These are small models running on laptops, often on CPU. Keep prompts short,
+outputs small (schema-constrained), and context under `OLLAMA_NUM_CTX` (8192).
+
+**Services and libraries:**
+
+- **Ollama** `0.40.13` — model server; Python client `ollama`, or `httpx` for raw API calls
+- **ChromaDB** `1.5.9` — vector store for the RAG demo
+- **Streamlit** `1.66.1` — UI, one page per demo beat in `src/yunex_demo/ui/pages/`
+- **Pydantic** + **pydantic-settings** — schemas for structured output, and config
+- **Python 3.12**, managed with **uv**; everything runs in Docker Compose
+- **Tooling:** ruff, pytest, pre-commit, detect-secrets
+
 ## Priorities, in order
 
 1. **Safety and correctness.** Best practices still apply, especially around
