@@ -11,8 +11,9 @@ no data leaving the laptop.
 | [Streamlit](https://streamlit.io) | the UI, one page per demo beat |
 
 > **Status: infrastructure only.** The stack comes up and the **Stack Health**
-> page verifies it end to end. The three demo pages are stubs — the extraction,
-> classification, and RAG logic is planned separately.
+> page verifies it end to end. The **Bare chatbot** page talks to the model with
+> only a system prompt; the other four demo pages are stubs — the extraction,
+> classification, embedding search, and RAG logic is planned separately.
 
 ---
 
@@ -344,6 +345,7 @@ docker/app.Dockerfile        uv-based Streamlit image
 docker/pull-models.sh        idempotent model provisioning
 src/yunex_demo/config.py     single source of truth for settings
 src/yunex_demo/health.py     stack checks (page + CLI share these)
+src/yunex_demo/chat.py       bare-model chat call (Bare chatbot page)
 src/yunex_demo/warm.py       model preloading
 src/yunex_demo/ui/           Streamlit pages
 ```
