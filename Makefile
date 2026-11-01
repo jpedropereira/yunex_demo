@@ -12,9 +12,10 @@ EXT_FILES    := -f compose.yaml -f compose.external.yaml
 APP_PORT     ?= 8501
 CHROMA_PORT  ?= 8100
 OLLAMA_PORT  ?= 11434
+NVDA_10K_URL := https://www.sec.gov/Archives/edgar/data/1045810/000104581026000021/nvda-20260125.htm
 
 .DEFAULT_GOAL := help
-.PHONY: help up up-gpu up-external _up_local down pull warm health logs ps lint test test-live clean
+.PHONY: help up up-gpu up-external _up_local down pull warm health index-nvda index-all logs ps lint test test-live clean
 
 help: ## Show available targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -58,6 +59,12 @@ warm: ## Load models into memory so the first on-stage call is not cold
 
 health: ## Run the full stack check headlessly (exits non-zero on failure)
 	$(COMPOSE) exec -T app python -m yunex_demo.health
+
+index-nvda: ## Index NVIDIA's 10-K for the Embedding search page (needs SEC_USER_AGENT in .env)
+	$(COMPOSE) exec -T app python -m yunex_demo.sec.ingest $(NVDA_10K_URL)
+
+index-all: ## Index all five sample 10-Ks; already-indexed ones are skipped
+	$(COMPOSE) exec -T app python -m yunex_demo.sec.ingest --all
 
 logs: ## Tail logs from every service
 	$(COMPOSE) logs -f --tail=100

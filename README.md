@@ -12,8 +12,32 @@ no data leaving the laptop.
 
 > **Status: infrastructure only.** The stack comes up and the **Stack Health**
 > page verifies it end to end. The **Bare chatbot** page talks to the model with
-> only a system prompt; the other four demo pages are stubs — the extraction,
-> classification, embedding search, and RAG logic is planned separately.
+> only a system prompt, and **Embedding search** finds pages of real SEC filings
+> by meaning; the remaining pages are stubs, planned separately.
+
+---
+
+## Indexing SEC filings
+
+The **Embedding search** page searches 10-K filings fetched from SEC EDGAR. The
+SEC asks automated clients to declare who they are, so add your own name and a
+real address to `.env`, which is gitignored:
+
+```bash
+SEC_USER_AGENT="Your Name you@example.com"
+```
+
+Then restart the stack with `make up`, because the app reads this when its
+container starts, and index before the talk:
+
+```bash
+make index-all    # NVIDIA, Apple, Microsoft, Alphabet and Amazon
+make index-nvda   # just NVIDIA
+```
+
+The page offers the same five as one-click buttons, and takes any other EDGAR
+URL. Indexing twice is safe: a filing that is already there is neither fetched nor
+embedded again. Searching needs no `SEC_USER_AGENT`, only indexing a new filing.
 
 ---
 
