@@ -20,6 +20,9 @@ COPY src ./src
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
+# The Workflow page's "Load sample inbox" button reads its PDFs from here.
+COPY example_docs ./example_docs
+
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH=/app/src
 

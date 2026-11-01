@@ -17,7 +17,7 @@ This demo builds up in five steps, each a page in the sidebar:
    schema, no grounding. The baseline everything after it improves on.
 2. **One-off** -- a single schema-constrained call. Invalid output is made
    impossible rather than merely unlikely.
-3. **Workflow** -- a deterministic pipeline that extracts, classifies, then
+3. **Workflow** -- a deterministic pipeline that classifies, extracts, then
    acts, validating every step and abstaining instead of guessing.
 4. **Embedding search** -- embed a question and pull the top-k most similar
    chunks from the vector store, to see what retrieval actually returns.
