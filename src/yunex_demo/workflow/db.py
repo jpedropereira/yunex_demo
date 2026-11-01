@@ -46,7 +46,7 @@ CREATE TABLE loaded_trades (
 
 -- Money is stored as TEXT: SQLite has no decimal type, and REAL would be a float.
 CREATE TABLE cash_calls (
-    fund_name TEXT NOT NULL,
+    fund_name TEXT NOT NULL COLLATE NOCASE,  -- grounding ignores case, so this key must too
     call_number INTEGER NOT NULL,
     amount_due TEXT NOT NULL,
     currency TEXT NOT NULL,
@@ -154,6 +154,12 @@ def add_to_review(conn: sqlite3.Connection, file_name: str, doc_type: str, reaso
             "INSERT OR REPLACE INTO review_queue VALUES (?, ?, ?)",
             (file_name, doc_type, reason),
         )
+
+
+def remove_from_review(conn: sqlite3.Connection, file_name: str) -> None:
+    """Clear a file's entry, once a later run of that file has passed every step."""
+    with conn:
+        conn.execute("DELETE FROM review_queue WHERE file_name = ?", (file_name,))
 
 
 def read_positions(conn: sqlite3.Connection) -> list[dict]:

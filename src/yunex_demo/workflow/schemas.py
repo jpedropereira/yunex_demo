@@ -8,7 +8,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, WithJsonSchema
+from pydantic import BaseModel, Field, StringConstraints, WithJsonSchema
 
 # Pydantic's default Decimal schema allows a string, and given a string this model
 # writes "USD 18.20". Declaring a number makes it write 18.2, which Pydantic still
@@ -22,6 +22,13 @@ WholeNumber = Annotated[int, Field(lt=10**15), WithJsonSchema({"type": "integer"
 
 CurrencyCode = Annotated[str, Field(pattern=r"^[A-Z]{3}$")]
 
+# These become database keys, and grounding ignores case and spacing. Without one
+# spelling, "tc-1 " would pass grounding and then load again as a different trade from "TC-1".
+Identifier = Annotated[str, StringConstraints(strip_whitespace=True, to_upper=True)]
+
+# Grounding ignores case and spacing here too, and the database key ignores case.
+FundName = Annotated[str, StringConstraints(strip_whitespace=True)]
+
 
 class Classification(BaseModel):
     # A closed set of labels: the model cannot invent a new type of document.
@@ -29,12 +36,12 @@ class Classification(BaseModel):
 
 
 class TradeConfirmation(BaseModel):
-    reference: str
+    reference: Identifier
     trade_date: date
     settlement_date: date
     side: Literal["buy", "sell"]
     security_name: str
-    ticker: str
+    ticker: Identifier
     quantity: WholeNumber
     price: Money
     currency: CurrencyCode
@@ -44,12 +51,12 @@ class TradeConfirmation(BaseModel):
 
 
 class CapitalCall(BaseModel):
-    fund_name: str
+    fund_name: FundName
     call_number: WholeNumber
     notice_date: date
     due_date: date
     total_commitment: Money
-    call_pct: Money = Field(description="Percentage of the commitment: 5.0 means 5%")
+    call_pct: Money
     amount_due: Money
     currency: CurrencyCode
     called_before: Money

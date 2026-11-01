@@ -190,12 +190,13 @@ def _outcome_text(step: Step, finished_text: str) -> str:
 
 def _record_name(result: DocumentResult) -> str:
     """Which record reached the Load stage: a trade reference, or a fund's call number."""
+    # A document can have extracted values and still fail validation, like Helios.
+    if result.validate.status != "passed":
+        return "Nothing: the document did not get this far."
     extracted = result.extracted or {}
     if "reference" in extracted:
         return f"Trade {extracted['reference']}"
-    if "call_number" in extracted:
-        return f"{extracted['fund_name']}, call no. {extracted['call_number']}"
-    return "Nothing: the document did not get this far."
+    return f"{extracted['fund_name']}, call no. {extracted['call_number']}"
 
 
 def describe_stage(result: DocumentResult, stage_name: str) -> StagePanel:

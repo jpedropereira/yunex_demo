@@ -84,7 +84,14 @@ def test_the_validate_panel_gives_the_helios_failure(fake_model):
 
 def test_stages_after_the_failure_say_they_were_not_reached(fake_model):
     result = pipeline.process_document("helios.pdf", HELIOS_PDF, db.connect())
-    assert explain.describe_stage(result, "Load").came_out == "Not reached."
+    panel = explain.describe_stage(result, "Load")
+    assert panel.came_out == "Not reached."
+    assert panel.went_in == "Nothing: the document did not get this far."
+
+
+def test_the_load_panel_names_the_record_that_reached_it(fake_model):
+    result = pipeline.process_document("solaris.pdf", SOLARIS_PDF, db.connect())
+    assert explain.describe_stage(result, "Load").went_in == "Trade TC-2026-10418"
 
 
 def test_the_extract_panel_shows_the_json_and_who_decided(fake_model):

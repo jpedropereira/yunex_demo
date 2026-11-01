@@ -10,6 +10,7 @@ flowchart shows that path before anything runs, then lights up the current stage
 import time
 from datetime import date
 from decimal import Decimal
+from functools import partial
 
 import httpx
 import streamlit as st
@@ -130,9 +131,7 @@ if documents:
                     file_name,
                     pdf_file,
                     conn,
-                    on_stage_start=lambda result, position=position: show_progress(
-                        result, position
-                    ),
+                    on_stage_start=partial(show_progress, position=position),
                 )
                 st.session_state.workflow_results.append(result)
 

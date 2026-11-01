@@ -16,8 +16,9 @@ from yunex_demo.workflow.schemas import CapitalCall, TradeConfirmation
 # Allows for rounding to the cent on the document itself.
 TOLERANCE = Decimal("0.01")
 
-# A number as a document writes it: "200", "42.50", "2,000,000.00".
-_NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?")
+# A number as a document writes it: "200", "42.50", "2,000,000.00". It must stand alone:
+# the 0000 inside the ISIN "XX0000HELS03" would otherwise make any invented 0 look grounded.
+_NUMBER = re.compile(r"(?<![\w.,-])\d[\d,]*(?:\.\d+)?(?![\w-])")
 
 
 @dataclass
@@ -31,7 +32,9 @@ def _amounts_match(first: Decimal, second: Decimal) -> bool:
     return abs(first - second) <= TOLERANCE
 
 
-def _sum_check(name: str, label: str, computed: Decimal, stated_label: str, stated: Decimal):
+def _sum_check(
+    name: str, label: str, computed: Decimal, stated_label: str, stated: Decimal
+) -> Check:
     """Compare a computed amount with the one the document states."""
     if _amounts_match(computed, stated):
         return Check(name, True, f"{label} = {computed:,.2f}, as the document says")
@@ -54,6 +57,13 @@ def _numbers_in(text: str) -> set[Decimal]:
     Decimals compare by value, so the model's 42.5 matches the document's 42.50.
     """
     return {Decimal(match.replace(",", "")) for match in _NUMBER.findall(text)}
+
+
+def _date_is_written(value: date, text: str) -> bool:
+    """Look for the date in a normalised text, as "3 november 2026" or as "2026-11-03"."""
+    written_out = f"{value.day} {value:%B %Y}".lower()
+    # The lookbehind stops 3 November from matching inside "13 November".
+    return re.search(rf"(?<!\d)0?{written_out}", text) is not None or value.isoformat() in text
 
 
 def _grounding_check(
@@ -83,8 +93,7 @@ def _grounding_check(
             missing.append(field)
 
     for field, value in dates.items():
-        written_out = _normalise(f"{value.day} {value:%B %Y}")  # 3 november 2026
-        if written_out not in text and value.isoformat() not in text:
+        if not _date_is_written(value, text):
             missing.append(field)
 
     if missing:

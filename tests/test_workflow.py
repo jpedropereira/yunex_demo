@@ -195,6 +195,24 @@ def test_grounding_accepts_a_date_written_in_iso_format():
     assert validate_trade(TradeConfirmation.model_validate(SOLARIS), text)[-1].passed
 
 
+def test_an_invented_zero_commission_cannot_ground_on_digits_inside_the_isin():
+    """Helios adds up with a commission of 0, so only grounding can stop this one."""
+    trade = TradeConfirmation.model_validate({**HELIOS, "commission": "0"})
+    assert _failed(validate_trade(trade, HELIOS_TEXT)) == ["Grounding"]
+
+
+def test_grounding_rejects_a_day_that_only_matches_part_of_the_written_day():
+    trade = TradeConfirmation.model_validate({**SOLARIS, "trade_date": "2026-10-04"})
+    grounding = validate_trade(trade, SOLARIS_TEXT)[-1]
+    assert "trade_date" in grounding.detail
+
+
+def test_grounding_accepts_a_day_written_with_a_leading_zero():
+    trade = TradeConfirmation.model_validate({**SOLARIS, "trade_date": "2026-10-04"})
+    text = SOLARIS_TEXT.replace("14 October 2026", "04 October 2026")
+    assert validate_trade(trade, text)[-1].passed
+
+
 # --- Database -----------------------------------------------------------------
 
 
@@ -236,6 +254,32 @@ def test_a_rejected_sell_can_still_load_once_the_shares_are_held():
     db.load_trade(conn, TradeConfirmation.model_validate(SOLARIS))
     assert db.load_trade(conn, trade).status == "loaded"
     assert db.read_positions(conn)[0]["after"] == 100
+
+
+@pytest.mark.parametrize("reference", ["TC-2026-10418 ", "tc-2026-10418"])
+def test_a_respelled_reference_does_not_load_the_trade_twice(reference):
+    conn = db.connect()
+    db.load_trade(conn, TradeConfirmation.model_validate(SOLARIS))
+    respelled = TradeConfirmation.model_validate({**SOLARIS, "reference": reference})
+    assert db.load_trade(conn, respelled).status == "already_loaded"
+    assert db.read_positions(conn)[0]["after"] == 1200
+
+
+def test_a_respelled_ticker_updates_the_same_position():
+    conn = db.connect()
+    db.load_trade(conn, TradeConfirmation.model_validate({**SOLARIS, "ticker": "solr "}))
+    assert [(row["ticker"], row["after"]) for row in db.read_positions(conn)] == [("SOLR", 1200)]
+
+
+@pytest.mark.parametrize(
+    "fund_name", ["ACME Green Infrastructure Fund I ", "acme green infrastructure fund i"]
+)
+def test_a_respelled_fund_name_does_not_load_the_call_twice(fund_name):
+    conn = db.connect()
+    db.load_capital_call(conn, CapitalCall.model_validate(ACME_CALL))
+    respelled = CapitalCall.model_validate({**ACME_CALL, "fund_name": fund_name})
+    assert db.load_capital_call(conn, respelled).status == "already_loaded"
+    assert len(db.read_cash_calls(conn)) == 1
 
 
 def test_cash_call_amounts_are_stored_as_exact_text():
@@ -358,6 +402,29 @@ def test_an_oversized_sell_goes_to_review_at_the_load_step(monkeypatch):
     assert result.validate.status == "passed"
     assert result.load.status == "failed"
     assert "only 1,000 held" in db.read_review_queue(conn)[0]["reason"]
+
+
+def test_a_file_that_later_loads_leaves_the_review_queue(monkeypatch):
+    """The sell is rejected until a buy makes the shares available."""
+    too_many = {**SELL, "quantity": 1100, "gross_amount": "46750.00", "total_amount": "46737.25"}
+    text = "\n".join([SELL_TEXT, "Quantity: 1,100", "46,750.00", "46,737.25"])
+    monkeypatch.setattr(pipeline, "read_document", lambda pdf_file: (text, None))
+    label = '{"doc_type": "trade_confirmation"}'
+    _pipeline_with_answers(monkeypatch, [label, json.dumps(too_many)] * 2)
+    conn = db.connect()
+
+    first = pipeline.process_document("sell.pdf", SOLARIS_PDF, conn)
+    assert first.load.status == "failed"
+    assert len(db.read_review_queue(conn)) == 1
+
+    db.load_trade(conn, TradeConfirmation.model_validate(SOLARIS))
+    second = pipeline.process_document("sell.pdf", SOLARIS_PDF, conn)
+    assert second.load.status == "passed"
+    assert db.read_review_queue(conn) == []
+
+
+def test_extract_prompt_says_how_to_write_a_percentage():
+    assert "5.0% is 5.0" in pipeline.extract_prompt("text", CapitalCall)
 
 
 def test_a_file_that_is_not_a_pdf_goes_to_review_with_no_model_call(monkeypatch):

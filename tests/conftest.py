@@ -29,7 +29,7 @@ SOLARIS = {
 HELIOS = {
     "reference": "TC-2026-10422",
     "trade_date": "2026-10-15",
-    "settlement_date": "2026-10-17",
+    "settlement_date": "2026-10-19",
     "side": "buy",
     "security_name": "Helios Storage Ltd",
     "ticker": "HELS",
