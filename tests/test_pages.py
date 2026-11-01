@@ -21,9 +21,9 @@ from yunex_demo.config import settings
 UI_DIR = Path(__file__).resolve().parents[1] / "src" / "yunex_demo" / "ui"
 
 CHATBOT_PAGE = "pages/1_Bare_Chatbot.py"
+ONE_OFF_PAGE = "pages/2_One_Off.py"
 
 STUB_PAGES = [
-    "pages/2_One_Off.py",
     "pages/3_Workflow.py",
     "pages/4_Embedding_Search.py",
     "pages/5_RAG_Agent.py",
@@ -36,7 +36,7 @@ def _run(relative: str, timeout: int = 180) -> AppTest:
     return app
 
 
-@pytest.mark.parametrize("page", ["Home.py", CHATBOT_PAGE, *STUB_PAGES])
+@pytest.mark.parametrize("page", ["Home.py", CHATBOT_PAGE, ONE_OFF_PAGE, *STUB_PAGES])
 def test_page_renders_without_exception(page):
     app = _run(page)
     assert not app.exception, f"{page} raised: {[e.value for e in app.exception]}"
@@ -85,3 +85,14 @@ def test_bare_chatbot_answers_a_question():
 
     roles = [message.name for message in app.chat_message]
     assert roles == ["user", "assistant"]
+
+
+def test_one_off_waits_for_an_upload():
+    """With no file uploaded, the page asks for one instead of reading from disk.
+
+    The real extraction is tested in test_extract.py: AppTest cannot upload files.
+    """
+    app = _run(ONE_OFF_PAGE)
+    assert not app.exception, f"One-off raised: {[e.value for e in app.exception]}"
+    assert app.info, "no prompt to upload a PDF"
+    assert not app.button, "the run button showed before any upload"
