@@ -203,8 +203,9 @@ def build_messages(system_prompt: str, template: str, document_text: str) -> lis
 # Grounding: does each value actually come from the document?
 # --------------------------------------------------------------------------- #
 
-# A number as a factsheet writes it: "4", "1.50", "100,000".
-_NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?")
+# A number as a factsheet writes it: "4", "1.50", "100,000". It must stand alone:
+# digits inside an ISIN or other identifier would otherwise make a wrong value look grounded.
+_NUMBER = re.compile(r"(?<![\w.,-])\d[\d,]*(?:\.\d+)?(?![\w-])")
 
 
 def _normalise(text: str) -> str:

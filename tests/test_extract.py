@@ -147,6 +147,12 @@ def test_numbers_match_however_the_document_writes_them():
     assert grounding["minimum_investment"] is True
 
 
+def test_digits_inside_an_identifier_do_not_ground_a_number():
+    facts = FundFacts.model_validate({**GOOD_FACTS, "risk_indicator": 7})
+    grounding = check_grounding(facts, "ISIN: XX0000000007")
+    assert grounding["risk_indicator"] is False
+
+
 def test_null_values_are_not_checked():
     facts = FundFacts.model_validate({**GOOD_FACTS, "isin": None, "largest_holding": None})
     grounding = check_grounding(facts, pdf_to_text(EXAMPLE_PDF))
