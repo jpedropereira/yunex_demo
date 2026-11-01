@@ -1,13 +1,18 @@
-"""A stand-in for the model, shared by the workflow and page tests.
+"""Stand-ins for the models, shared by the workflow, SEC and page tests.
 
-It returns the correct answer for each sample PDF, so these tests need no Ollama,
-while the validators still check those answers against the real PDF text.
+The fake model returns the correct answer for each sample PDF, so these tests need no
+Ollama, while the validators still check those answers against the real PDF text. The
+SEC stand-ins need no Ollama, Chroma or network either.
 """
 
+import hashlib
 import json
+import uuid
 
+import chromadb
 import pytest
 
+from yunex_demo.sec import ingest, store
 from yunex_demo.workflow import pipeline
 from yunex_demo.workflow.schemas import Classification
 
@@ -74,3 +79,67 @@ def fake_call_model(prompt: str, schema: type) -> str:
 @pytest.fixture
 def fake_model(monkeypatch):
     monkeypatch.setattr(pipeline, "call_model", fake_call_model)
+
+
+# --- SEC filings ---
+
+ALPHA_ACCESSION = "000000000000000001"
+BETA_ACCESSION = "000000000000000002"
+
+
+def fake_embed_texts(texts: list[str]) -> list[list[float]]:
+    """Count hashed words into a vector: repeatable, and shared words score higher."""
+    vectors = []
+    for text in texts:
+        vector = [1.0] + [0.0] * 63
+        for word in text.lower().split():
+            digest = hashlib.sha256(word.encode()).digest()
+            vector[digest[0] % 64] += 1.0
+        vectors.append(vector)
+    return vectors
+
+
+def filing_html(company: str, pages: list[str]) -> str:
+    """A small inline XBRL filing: a hidden header, cover-page facts, and page breaks."""
+    body = '<hr style="page-break-after:always"/>'.join(f"<div>{page}</div>" for page in pages)
+    return f"""<html><body>
+    <div style="display:none"><ix:header><ix:hidden>
+      <ix:nonNumeric name="dei:DocumentFiscalYearFocus">2026</ix:nonNumeric>
+    </ix:hidden></ix:header></div>
+    <ix:nonNumeric name="dei:EntityRegistrantName"><span>{company}</span></ix:nonNumeric>
+    <ix:nonNumeric name="dei:TradingSymbol">TICK</ix:nonNumeric>
+    <ix:nonNumeric name="dei:DocumentType">10-K</ix:nonNumeric>
+    <ix:nonNumeric name="dei:DocumentPeriodEndDate">January 25, 2026</ix:nonNumeric>
+    {body}
+    </body></html>"""
+
+
+def filing_url(accession: str) -> str:
+    return f"https://www.sec.gov/Archives/edgar/data/1234/{accession}/filing.htm"
+
+
+@pytest.fixture
+def sec_collection(monkeypatch):
+    """A fake embedder and an empty collection. Ephemeral clients share state, so unique name."""
+    monkeypatch.setattr(store, "embed_texts", fake_embed_texts)
+    client = chromadb.EphemeralClient()
+    name = f"test-{uuid.uuid4().hex[:8]}"
+    yield client.create_collection(
+        name, embedding_function=None, configuration={"hnsw": {"space": "cosine"}}
+    )
+    client.delete_collection(name)
+
+
+@pytest.fixture
+def two_filings(monkeypatch, sec_collection):
+    """Two companies indexed, with twelve pages each, so k=10 and the filter can be tested."""
+    filler = "revenue customers products markets suppliers employees " * 6
+    pages = [f"Page {number} export controls sales China {filler}" for number in range(1, 13)]
+    html_by_url = {
+        filing_url(ALPHA_ACCESSION): filing_html("ALPHA CORP", pages),
+        filing_url(BETA_ACCESSION): filing_html("BETA CORP", pages),
+    }
+    monkeypatch.setattr(ingest, "fetch_filing", html_by_url.__getitem__)
+    for url in html_by_url:
+        ingest.ingest_filing(url, sec_collection)
+    return sec_collection

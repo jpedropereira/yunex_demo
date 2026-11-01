@@ -24,7 +24,12 @@ class Settings(BaseSettings):
 
     chroma_host: str = "chroma"
     chroma_port: int = 8000
-    chroma_collection: str = "yunex_demo"
+
+    # The SEC requires automated clients to identify themselves: "Name email".
+    # Empty by default, because it holds personal details that belong in .env.
+    sec_user_agent: str = ""
+    sec_collection: str = "sec_filings"
+    embed_batch_size: int = 16
 
     # gemma4 "e2b" is an effective-2B edge build: ~4.3GB, fits a 16GB laptop
     # alongside the embedder. Drop to gemma3:1b-it-qat on 8GB machines.

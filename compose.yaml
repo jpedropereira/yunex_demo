@@ -75,7 +75,9 @@ services:
       OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:--1}
       CHROMA_HOST: ${CHROMA_HOST:-chroma}
       CHROMA_PORT: ${CHROMA_PORT:-8000}
-      CHROMA_COLLECTION: ${CHROMA_COLLECTION:-yunex_demo}
+      SEC_USER_AGENT: ${SEC_USER_AGENT:-}
+      SEC_COLLECTION: ${SEC_COLLECTION:-sec_filings}
+      EMBED_BATCH_SIZE: ${EMBED_BATCH_SIZE:-16}
     volumes:
       # Live reload during the demo: edit a page, refresh the browser.
       - ./src:/app/src

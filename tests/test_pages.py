@@ -14,18 +14,20 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
+from conftest import ALPHA_ACCESSION, BETA_ACCESSION, filing_html, filing_url
 from streamlit.testing.v1 import AppTest
 
 from yunex_demo.config import settings
+from yunex_demo.sec import ingest, search, store
 
 UI_DIR = Path(__file__).resolve().parents[1] / "src" / "yunex_demo" / "ui"
 
 CHATBOT_PAGE = "pages/1_Bare_Chatbot.py"
 ONE_OFF_PAGE = "pages/2_One_Off.py"
 WORKFLOW_PAGE = "pages/3_Workflow.py"
+EMBEDDING_PAGE = "pages/4_Embedding_Search.py"
 
 STUB_PAGES = [
-    "pages/4_Embedding_Search.py",
     "pages/5_RAG_Agent.py",
 ]
 
@@ -37,7 +39,7 @@ def _run(relative: str, timeout: int = 180) -> AppTest:
 
 
 @pytest.mark.parametrize(
-    "page", ["Home.py", CHATBOT_PAGE, ONE_OFF_PAGE, WORKFLOW_PAGE, *STUB_PAGES]
+    "page", ["Home.py", CHATBOT_PAGE, ONE_OFF_PAGE, WORKFLOW_PAGE, EMBEDDING_PAGE, *STUB_PAGES]
 )
 def test_page_renders_without_exception(page):
     app = _run(page)
@@ -188,3 +190,180 @@ def test_workflow_load_sample_inbox_then_again_then_reset(fake_model):
     assert len(_all_tables(app)) == 1
     assert not any(header.value == "Raw outputs" for header in app.subheader)
     assert _table_with_column(app, "Before → after")[0]["Before → after"] == "1,000 → 1,000"
+
+
+def test_embedding_page_explains_itself_when_chroma_is_down(monkeypatch):
+    def chroma_is_down():
+        raise ValueError("Could not connect to a Chroma server.")
+
+    monkeypatch.setattr(store, "get_collection", chroma_is_down)
+    app = _run(EMBEDDING_PAGE)
+    assert not app.exception, f"page raised: {[e.value for e in app.exception]}"
+    assert "Could not reach ChromaDB" in app.error[0].value
+
+
+def test_embedding_page_asks_for_the_user_agent_only_when_missing(monkeypatch, sec_collection):
+    monkeypatch.setattr(store, "get_collection", lambda: sec_collection)
+
+    monkeypatch.setattr(settings, "sec_user_agent", "")
+    assert any("SEC_USER_AGENT" in warning.value for warning in _run(EMBEDDING_PAGE).warning)
+
+    monkeypatch.setattr(settings, "sec_user_agent", "Test Name test@example.com")
+    assert not _run(EMBEDDING_PAGE).warning
+
+
+def test_embedding_page_rejects_a_non_edgar_url_without_fetching(monkeypatch, sec_collection):
+    def must_not_fetch(url):
+        raise AssertionError("a rejected URL must never be fetched")
+
+    monkeypatch.setattr(store, "get_collection", lambda: sec_collection)
+    monkeypatch.setattr(ingest, "fetch_filing", must_not_fetch)
+
+    app = _run(EMBEDDING_PAGE)
+    app.text_input(key="url").set_value("https://evil.example/filing.htm")
+    app.button(key="index").click().run()
+
+    assert not app.exception, f"page raised: {[e.value for e in app.exception]}"
+    assert "Not an EDGAR document URL" in app.error[0].value
+
+
+def test_embedding_page_says_already_indexed_without_fetching(monkeypatch, two_filings):
+    def must_not_fetch(url):
+        raise AssertionError("an indexed filing must not be fetched again")
+
+    monkeypatch.setattr(store, "get_collection", lambda: two_filings)
+    monkeypatch.setattr(ingest, "fetch_filing", must_not_fetch)
+
+    app = _run(EMBEDDING_PAGE)
+    app.text_input(key="url").set_value(filing_url(ALPHA_ACCESSION))
+    app.button(key="index").click().run()
+
+    assert not app.exception, f"page raised: {[e.value for e in app.exception]}"
+    assert app.success[0].value == "Already indexed: 12 pages"
+
+
+def test_embedding_page_shows_k_results_and_respects_the_filter(monkeypatch, two_filings):
+    monkeypatch.setattr(store, "get_collection", lambda: two_filings)
+
+    def result_headings() -> list[str]:
+        return [item.value for item in app.markdown if item.value.startswith("#### ")]
+
+    def result_lines() -> list[str]:
+        return [item.value for item in app.text if "· page" in item.value]
+
+    app = _run(EMBEDDING_PAGE)
+    assert not app.exception, f"page raised: {[e.value for e in app.exception]}"
+    table = app.dataframe[0].value
+    assert list(table["Company"]) == ["ALPHA CORP", "BETA CORP"]
+
+    app.text_input(key="question").set_value("export controls on sales to China").run()
+    assert not app.exception, f"page raised: {[e.value for e in app.exception]}"
+    assert len(result_headings()) == 5, "the default k is 5"
+
+    app.slider(key="k").set_value(10).run()
+    assert len(result_headings()) == 10
+    assert {line.split(" · ")[0] for line in result_lines()} == {"ALPHA CORP", "BETA CORP"}
+
+    selector = app.selectbox(key="document")
+    assert selector.options == [
+        "All documents",
+        "ALPHA CORP · 10-K · FY2026",
+        "BETA CORP · 10-K · FY2026",
+    ]
+    selector.set_value(BETA_ACCESSION).run()
+    assert len(result_headings()) == 10, "filtering happens before ranking, so still k results"
+    assert {line.split(" · ")[0] for line in result_lines()} == {"BETA CORP"}
+
+
+def test_embedding_page_suggested_question_searches_and_open_search_still_works(
+    monkeypatch, two_filings
+):
+    searched = []
+    real_search = search.search
+
+    def recording_search(question, k, collection, doc_id=None):
+        searched.append(question)
+        return real_search(question, k, collection, doc_id=doc_id)
+
+    monkeypatch.setattr(store, "get_collection", lambda: two_filings)
+    monkeypatch.setattr(search, "search", recording_search)
+
+    app = _run(EMBEDDING_PAGE)
+    assert not searched, "nothing should be searched until someone asks"
+
+    suggestion = app.button(key="suggestion_3")
+    assert suggestion.label == "Can rivals steal their customers?"
+    suggestion.click().run()
+
+    assert not app.exception, f"page raised: {[e.value for e in app.exception]}"
+    assert app.text_input(key="question").value == suggestion.label
+    assert searched == [suggestion.label]
+    assert [item.value for item in app.markdown if item.value.startswith("#### ")]
+
+    # Typing over a suggestion must win, and must survive the rerun.
+    app.text_input(key="question").set_value("my own question").run()
+    assert not app.exception, f"page raised: {[e.value for e in app.exception]}"
+    assert searched[-1] == "my own question"
+    assert app.text_input(key="question").value == "my own question"
+
+
+def test_embedding_page_sample_buttons_index_and_then_show_as_done(monkeypatch, sec_collection):
+    fetched = []
+
+    def fake_fetch(url):
+        fetched.append(url)
+        return filing_html("ALPHA CORP", ["word " * 40, "word " * 40])
+
+    monkeypatch.setattr(store, "get_collection", lambda: sec_collection)
+    monkeypatch.setattr(ingest, "fetch_filing", fake_fetch)
+    apple = ingest.SAMPLE_FILINGS[1]
+
+    app = _run(EMBEDDING_PAGE)
+    assert app.text_input(key="url").value == "", "the paste box starts empty"
+    assert not app.button(key="sample_Apple").disabled
+
+    app.button(key="sample_Apple").click().run()
+
+    assert not app.exception, f"page raised: {[e.value for e in app.exception]}"
+    assert fetched == [apple.url]
+    assert app.success[0].value == "Indexed 2 pages, skipped 0."
+    assert app.button(key="sample_Apple").disabled
+    assert app.button(key="sample_Apple").label == "Apple · 2 pages"
+    assert not app.button(key="sample_NVIDIA").disabled
+    assert list(app.dataframe[0].value["Company"]) == ["ALPHA CORP"]
+
+
+def test_embedding_page_index_all_fetches_only_whats_missing_and_reports_failures(
+    monkeypatch, sec_collection
+):
+    failing_urls = {ingest.SAMPLE_FILINGS[2].url}
+    fetched = []
+
+    def fake_fetch(url):
+        fetched.append(url)
+        if url in failing_urls:
+            raise ingest.FetchError("The SEC returned HTTP 500.")
+        return filing_html("ALPHA CORP", ["word " * 40, "word " * 40])
+
+    monkeypatch.setattr(store, "get_collection", lambda: sec_collection)
+    monkeypatch.setattr(ingest, "fetch_filing", fake_fetch)
+
+    app = _run(EMBEDDING_PAGE)
+    app.button(key="sample_NVIDIA").click().run()
+    fetched.clear()
+
+    app.button(key="index_all").click().run()
+
+    assert not app.exception, f"page raised: {[e.value for e in app.exception]}"
+    assert fetched == [sample.url for sample in ingest.SAMPLE_FILINGS[1:]]
+    assert "HTTP 500" in app.error[0].value
+    assert len(app.success) == 3
+    assert not app.button(key="index_all").disabled, "the failed filing is still missing"
+
+    # Retrying fetches only the one that failed, and then nothing is left to index.
+    failing_urls.clear()
+    fetched.clear()
+    app.button(key="index_all").click().run()
+    assert not app.exception, f"page raised: {[e.value for e in app.exception]}"
+    assert fetched == [ingest.SAMPLE_FILINGS[2].url]
+    assert app.button(key="index_all").disabled
