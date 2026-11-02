@@ -66,9 +66,8 @@ index-nvda: ## Index NVIDIA's 10-K for the Embedding search page (needs SEC_USER
 index-all: ## Index the latest 10-K of all five companies; already-indexed ones are skipped
 	$(COMPOSE) exec -T app python -m yunex_demo.sec.ingest --all
 
-reindex: ## Delete the search index and rebuild it from the SEC (needs SEC_USER_AGENT in .env)
-	$(COMPOSE) exec -T app python -c "from yunex_demo.sec import store; store.delete_collection()"
-	$(MAKE) index-all
+reindex: ## Rebuild the search index from the SEC; keeps the old one if any filing fails (needs SEC_USER_AGENT in .env)
+	$(COMPOSE) exec -T app python -m yunex_demo.sec.ingest --rebuild
 
 pull-e4b: ## Pull the larger model for the Agent page; then set AGENT_MODEL=gemma4:e4b-it-qat
 	$(COMPOSE) exec -T ollama ollama pull gemma4:e4b-it-qat

@@ -171,9 +171,10 @@ def _log_trade_request(
 
     quantity = arguments.get("quantity")
     has_price = ticker in state.prices
-    if quantity is None and has_price and hooks.is_number(arguments.get("portfolio_pct")):
+    if quantity is None and has_price and hooks.is_valid_percent(arguments.get("portfolio_pct")):
         quantity = tools.trade_quantity(arguments, state.total_value, state.prices)
-    if not hooks.is_whole_number(quantity):
+    # The reason still states what was asked, so the audit trail loses nothing by this.
+    if not hooks.is_whole_number(quantity) or abs(quantity) > portfolio.LARGEST_STORABLE_QUANTITY:
         quantity = None
 
     return portfolio.log_trade(

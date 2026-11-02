@@ -23,6 +23,12 @@ class SearchHit:
     source_url: str
     printed_page: int
 
+    @property
+    def page_label(self) -> str:
+        # Printed page 0 means the cover and contents, which have no number in the filing.
+        label = f"page {self.printed_page}" if self.printed_page else "front pages"
+        return f"{label}, part {self.part}" if self.part > 1 else label
+
 
 @dataclass(frozen=True)
 class IndexedDocument:

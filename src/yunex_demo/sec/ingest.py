@@ -5,6 +5,7 @@ else, so the agent can only ever cite those. The page and the command line both 
 ``ingest_filing``. Pre-index before the talk with ``make index-all``, or directly:
 
     python -m yunex_demo.sec.ingest --all
+    python -m yunex_demo.sec.ingest --rebuild
     python -m yunex_demo.sec.ingest <edgar document url>
 """
 
@@ -218,15 +219,49 @@ def ingest_filing(
     )
 
 
+def _print_result(result: IngestResult) -> None:
+    if result.already_indexed:
+        print(f"Already indexed: {result.pages_indexed} pages")
+    else:
+        replaced = ", replacing the older one" if result.replaced_older else ""
+        print(
+            f"Indexed {result.company} {result.form} FY{result.fiscal_year}: "
+            f"{result.pages_indexed} pages, {result.pages_skipped} skipped{replaced}"
+        )
+
+
+def rebuild_index() -> int:
+    """Index every filing beside the current index, and swap only if all of them worked.
+
+    So a missing SEC_USER_AGENT or bad Wi-Fi can't leave the talk with no filings at all.
+    """
+    try:
+        rebuilt = store.empty_rebuild_collection()
+        for agent_filing in settings.agent_filings:
+            url = latest_10k_url(agent_filing.cik)
+            print(url)
+            _print_result(ingest_filing(url, rebuilt))
+    except EXPECTED_ERRORS as exc:
+        print(f"FAILED: {exc}\nThe current index was not changed.", file=sys.stderr)
+        return 1
+
+    store.replace_index(rebuilt)
+    print("The search index was rebuilt.")
+    return 0
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print(
-            "Usage: python -m yunex_demo.sec.ingest <edgar document url> | --all",
+            "Usage: python -m yunex_demo.sec.ingest <edgar document url> | --all | --rebuild",
             file=sys.stderr,
         )
         return 2
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    if sys.argv[1] == "--rebuild":
+        return rebuild_index()
 
     # One bad filing shouldn't stop the others: they are separate, and re-running is cheap.
     failures = 0
@@ -241,14 +276,7 @@ def main() -> int:
             failures += 1
             continue
 
-        if result.already_indexed:
-            print(f"Already indexed: {result.pages_indexed} pages")
-        else:
-            replaced = ", replacing the older one" if result.replaced_older else ""
-            print(
-                f"Indexed {result.company} {result.form} FY{result.fiscal_year}: "
-                f"{result.pages_indexed} pages, {result.pages_skipped} skipped{replaced}"
-            )
+        _print_result(result)
     return 1 if failures else 0
 
 

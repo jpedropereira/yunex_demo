@@ -1,5 +1,6 @@
 """SEC filing search: URL safety, parsing, ingest and search. No network and no Ollama."""
 
+import chromadb
 import httpx
 import pytest
 from bs4 import BeautifulSoup
@@ -663,3 +664,68 @@ def test_list_documents_counts_a_split_page_once(monkeypatch, sec_collection):
     _serve(monkeypatch, filing_html("ALPHA CORP", ["word " * 1500, WORDS]))
     ingest.ingest_filing(filing_url(ALPHA_ACCESSION), sec_collection)
     assert search.list_documents(sec_collection)[0].pages == 2
+
+
+@pytest.mark.parametrize(
+    ("printed_page", "part", "label"),
+    [(12, 1, "page 12"), (12, 2, "page 12, part 2"), (0, 1, "front pages")],
+)
+def test_a_search_hit_labels_its_page(printed_page, part, label):
+    hit = search.SearchHit(0.7, "", "", "", "", "", 3, part, "", printed_page)
+    assert hit.page_label == label
+
+
+# --- make reindex ---
+
+
+@pytest.fixture
+def live_index(monkeypatch, sec_collection):
+    """sec_collection as the live index, in the in-memory Chroma that store now connects to."""
+    monkeypatch.setattr(store, "_client", chromadb.EphemeralClient)
+    monkeypatch.setattr(settings, "sec_collection", sec_collection.name)
+    monkeypatch.setattr(ingest, "latest_10k_url", fake_latest_10k_url)
+    monkeypatch.setattr("sys.argv", ["ingest", "--rebuild"])
+    monkeypatch.setattr(ingest, "fetch_filing", lambda url: filing_html("ALPHA CORP", [WORDS]))
+    ingest.ingest_filing(filing_url(ALPHA_ACCESSION), sec_collection)
+    return sec_collection
+
+
+def test_a_rebuild_replaces_the_index_with_every_filing(live_index):
+    assert ingest.main() == 0
+
+    documents = search.list_documents(store.get_collection())
+    assert len(documents) == len(settings.agent_filings)
+    assert ALPHA_ACCESSION not in {document.doc_id for document in documents}
+
+
+def test_a_rebuild_that_fails_leaves_the_index_untouched(monkeypatch, live_index, capsys):
+    def sec_fails_for_apple(cik):
+        if cik == APPLE_CIK:
+            raise ingest.FetchError("Could not reach the SEC.")
+        return fake_latest_10k_url(cik)
+
+    monkeypatch.setattr(ingest, "latest_10k_url", sec_fails_for_apple)
+
+    assert ingest.main() == 1
+    assert "The current index was not changed" in capsys.readouterr().err
+    documents = search.list_documents(store.get_collection())
+    assert [document.doc_id for document in documents] == [ALPHA_ACCESSION]
+
+
+def test_a_rebuild_works_with_no_index_yet(live_index):
+    chromadb.EphemeralClient().delete_collection(settings.sec_collection)
+
+    assert ingest.main() == 0
+    assert len(search.list_documents(store.get_collection())) == len(settings.agent_filings)
+
+
+def test_a_rebuild_clears_what_a_failed_one_left_behind(live_index):
+    store.empty_rebuild_collection().upsert(
+        ids=["stale"],
+        embeddings=[[0.0] * 768],
+        documents=["stale"],
+        metadatas=[{"doc_id": "stale", "ticker": "NVDA"}],
+    )
+
+    assert ingest.main() == 0
+    assert store.get_collection().get(ids=["stale"])["ids"] == []

@@ -117,6 +117,7 @@ def test_known_tool_hook():
         ToolCall("get_quote", {"ticker": 7}),
         ToolCall("search_filing", {"ticker": "AAPL", "question": " "}),
         ToolCall("get_price_history", {"ticker": "AAPL", "period": "5y"}),
+        ToolCall("get_price_history", {"ticker": "AAPL", "period": ["1y"]}),
         ToolCall("propose_trade", {"ticker": "AAPL", "side": "short", "quantity": 1}),
         ToolCall("propose_trade", {"ticker": "AAPL", "side": "buy"}),
         ToolCall(
@@ -510,11 +511,34 @@ def test_a_search_says_so_when_no_page_helps(monkeypatch, context):
     assert context.retrieved_pages == {}
 
 
-def test_a_reply_that_is_not_valid_loses_that_page_and_says_why(monkeypatch, context):
+def test_a_reply_that_is_not_valid_is_an_error_and_not_a_claim_about_the_filing(
+    monkeypatch, context
+):
     _search_finds(monkeypatch, [_hit(9)])
     monkeypatch.setattr(quotes, "ask_model", lambda prompt: '{"quotes": ["cut off')
-    assert _search_apple(context)["status"] == "no_relevant_pages"
-    assert context.page_reviews[0].outcome == "unusable reply"
+
+    result = _search_apple(context)
+
+    assert result["status"] == "error"
+    assert "1 of 1 pages couldn't be read" in result["reason"]
+    assert context.page_reviews[0].outcome == quotes.UNUSABLE_REPLY
+
+
+def test_one_unusable_page_keeps_the_sentences_from_the_others(monkeypatch, context):
+    _search_finds(monkeypatch, [_hit(9, "Unreadable page."), _hit(10, "A useful sentence here.")])
+    replies = iter(['{"quotes": ["cut off', json.dumps({"quotes": ["A useful sentence here."]})])
+    monkeypatch.setattr(quotes, "ask_model", lambda prompt: next(replies))
+
+    assert _search_apple(context)["results"][0]["quotes"] == ["A useful sentence here."]
+
+
+def test_a_straight_apostrophe_still_counts_as_on_a_page_with_curly_ones(monkeypatch, context):
+    _search_finds(monkeypatch, [_hit(9, "The Company’s revenue grew this year.")])
+    _model_quotes(monkeypatch, "The Company's revenue grew this year.")
+
+    assert _search_apple(context)["results"][0]["quotes"] == [
+        "The Company's revenue grew this year."
+    ]
 
 
 def test_the_cover_and_contents_are_skipped_and_the_next_page_takes_their_place(
@@ -690,6 +714,11 @@ def test_a_denied_trade_reaches_the_model_and_the_log(monkeypatch, context):
         {"ticker": "TSLA", "side": "buy", "quantity": 10},
         {"ticker": ["NVDA"], "side": 7, "quantity": "lots"},
         {},
+        {"ticker": "NVDA", "side": "buy", "quantity": 10**20},
+        {"ticker": "NVDA", "side": "buy", "quantity": -(10**20)},
+        {"ticker": "NVDA", "side": "buy", "portfolio_pct": 1e40},
+        {"ticker": "NVDA", "side": "buy", "portfolio_pct": float("inf")},
+        {"ticker": "NVDA", "side": "buy", "portfolio_pct": float("nan")},
     ],
 )
 def test_a_denied_trade_is_logged_whatever_the_model_sent(monkeypatch, context, arguments):
@@ -986,6 +1015,31 @@ def _pending(conn, ticker="AAPL", side="sell", quantity=100, price=Decimal("300.
     return portfolio.log_trade(
         conn, ticker=ticker, side=side, quantity=quantity, price=price, status="pending", reason=""
     )
+
+
+def _pending_nvda_trade(proposed_price: str = "180.00") -> dict:
+    return {"side": "buy", "quantity": 10, "ticker": "NVDA", "price": proposed_price}
+
+
+def test_the_card_shows_the_price_approving_would_use():
+    text = approval.describe_pending_trade(
+        _pending_nvda_trade(), Decimal("190.00"), Decimal("10000")
+    )
+
+    assert "buy 10 NVDA at USD 190.00 = USD 1,900.00 (19.00% of the portfolio)" in text
+    assert "Proposed at USD 180.00" in text
+
+
+def test_the_card_mentions_the_proposed_price_only_if_it_changed():
+    text = approval.describe_pending_trade(
+        _pending_nvda_trade(), Decimal("180.00"), Decimal("10000")
+    )
+    assert "Proposed" not in text
+
+
+def test_the_card_says_so_when_there_is_no_current_price():
+    text = approval.describe_pending_trade(_pending_nvda_trade(), None, Decimal(0))
+    assert "no current price" in text
 
 
 def test_approving_executes_and_approving_again_changes_nothing(conn):

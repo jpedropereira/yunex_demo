@@ -64,8 +64,9 @@ def is_whole_number(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def is_number(value: object) -> bool:
-    return isinstance(value, int | float) and not isinstance(value, bool)
+def is_valid_percent(value: object) -> bool:
+    # Infinity and NaN fail too: every comparison with NaN is false.
+    return isinstance(value, int | float) and not isinstance(value, bool) and 0 < value <= 100
 
 
 def _quantity(call: ToolCall, state: HookState) -> int:
@@ -91,7 +92,9 @@ def _argument_problem(call: ToolCall) -> str | None:
     if call.name == "search_filing" and not (isinstance(question, str) and question.strip()):
         return "question must not be empty"
 
-    if call.name == "get_price_history" and arguments.get("period") not in PERIOD_DAYS:
+    # A string first: a list from the model can't be looked up in a dict, and would raise.
+    period = arguments.get("period")
+    if call.name == "get_price_history" and not (isinstance(period, str) and period in PERIOD_DAYS):
         return f"period must be one of {', '.join(PERIOD_DAYS)}"
 
     if call.name == "propose_trade":
@@ -101,10 +104,8 @@ def _argument_problem(call: ToolCall) -> str | None:
         has_percent = arguments.get("portfolio_pct") is not None
         if has_quantity == has_percent:
             return "send exactly one of quantity or portfolio_pct"
-        if has_percent:
-            percent = arguments["portfolio_pct"]
-            if not (is_number(percent) and 0 < percent <= 100):
-                return "portfolio_pct must be above 0 and at most 100"
+        if has_percent and not is_valid_percent(arguments["portfolio_pct"]):
+            return "portfolio_pct must be above 0 and at most 100"
     return None
 
 

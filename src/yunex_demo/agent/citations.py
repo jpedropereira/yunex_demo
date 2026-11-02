@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from urllib.parse import quote
 
 from yunex_demo.agent.hooks import COMPANY_ALIASES
+from yunex_demo.agent.quotes import plain_quotes
 from yunex_demo.agent.tools import RetrievedPage
 from yunex_demo.sec import filing
 from yunex_demo.workflow.validators import numbers_in
@@ -80,16 +81,9 @@ class Evidence:
         return self.status != PASSAGE_FOUND or bool(self.missing_numbers or self.misquotes)
 
 
-def _plain_quotes(text: str) -> str:
-    """Filings use curly quotes and models mostly don't, which shouldn't count as a difference."""
-    for curly, plain in (("’", "'"), ("‘", "'"), ("“", '"'), ("”", '"')):
-        text = text.replace(curly, plain)
-    return text
-
-
 def _words(text: str) -> set[str]:
     # Commas go first, so that "223,000" stays one word and only matches itself.
-    return set(WORD.findall(_plain_quotes(text).lower().replace(",", ""))) - COMMON_WORDS
+    return set(WORD.findall(plain_quotes(text).lower().replace(",", ""))) - COMMON_WORDS
 
 
 def _overlap(claim_words: set[str], passage_words: set[str]) -> float:
@@ -135,10 +129,10 @@ def _missing_numbers(claim: str, page_text: str) -> list[str]:
 
 def _misquotes(claim: str, page_text: str) -> list[str]:
     """Text in quotation marks is a promise of the exact words, so test it for exactly that."""
-    page = " ".join(_plain_quotes(page_text).lower().split())
+    page = " ".join(plain_quotes(page_text).lower().split())
     return [
         quoted
-        for quoted in QUOTED_TEXT.findall(_plain_quotes(claim))
+        for quoted in QUOTED_TEXT.findall(plain_quotes(claim))
         if " ".join(quoted.lower().split()) not in page
     ]
 

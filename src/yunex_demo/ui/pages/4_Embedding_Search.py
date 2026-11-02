@@ -58,7 +58,16 @@ if not settings.sec_user_agent:
         "Filings that are already indexed can still be searched."
     )
 
-documents = search.list_documents(collection)
+try:
+    documents = search.list_documents(collection)
+except ingest.EXPECTED_ERRORS as exc:
+    st.error(
+        "Could not read the search index. If an older version built it, rebuild it with "
+        "`make reindex`. Otherwise, check the Stack Health page."
+    )
+    st.text(str(exc))
+    st.stop()
+
 pages_by_ticker = {document.ticker: document.pages for document in documents}
 targets_to_index = []
 
@@ -196,11 +205,8 @@ if question:
             # Cosine similarity can be negative, which st.progress rejects.
             st.progress(max(0.0, min(1.0, hit.similarity)))
 
-            page_label = f"page {hit.printed_page}"
-            if hit.part > 1:
-                page_label += f", part {hit.part}"
             # Filing text is untrusted, so it goes through st.text, never markdown.
-            st.text(f"{hit.company} · {hit.form} · FY{hit.fiscal_year} · {page_label}")
+            st.text(f"{hit.company} · {hit.form} · FY{hit.fiscal_year} · {hit.page_label}")
 
             words = hit.text.split()
             preview = " ".join(words[:PREVIEW_WORDS])

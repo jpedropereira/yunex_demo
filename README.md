@@ -41,9 +41,10 @@ already there is neither fetched nor embedded again. Searching needs no
 `SEC_USER_AGENT`, only indexing a new filing.
 
 Citations use the page number printed in the filing, which is stored when a filing
-is indexed. An index made before that was added has to be rebuilt, or searches fail
-with `'printed_page'`: `make clean` also deletes the models, so instead delete just
-the index with `make reindex`.
+is indexed. An index made by an older version has to be rebuilt, or the Embedding
+search page says it can't read it and searches fail with an error like
+`'printed_page'`. `make clean` also deletes the models, so use `make reindex`, which
+rebuilds beside the current index and only swaps if all five filings succeed.
 
 ## The Agent page
 

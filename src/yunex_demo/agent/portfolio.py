@@ -15,6 +15,9 @@ PORTFOLIO_NAME = "Ana — Tech Growth"
 
 SEED_POSITIONS = {"NVDA": 120, "AAPL": 150, "MSFT": 80, "GOOGL": 140, "AMZN": 160}
 
+# SQLite's INTEGER is 64 bits, and a denied request can ask for more than that.
+LARGEST_STORABLE_QUANTITY = 2**63 - 1
+
 # Money is stored as TEXT: SQLite has no decimal type, and REAL would be a float. Quantity,
 # price and value are empty on a denied trade that never had a usable one.
 _SCHEMA = """

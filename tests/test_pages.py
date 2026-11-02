@@ -10,10 +10,12 @@ and verifies for real when the stack is up.
 """
 
 import socket
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
+import streamlit as st
 from conftest import (
     ALPHA_ACCESSION,
     BETA_ACCESSION,
@@ -22,6 +24,7 @@ from conftest import (
     filing_url,
 )
 from ollama import ChatResponse, Message
+from streamlit.runtime.scriptrunner_utils.exceptions import StopException
 from streamlit.testing.v1 import AppTest
 
 from yunex_demo.agent import context_usage, loop, market, tools
@@ -219,6 +222,19 @@ def test_embedding_page_explains_itself_when_chroma_is_down(monkeypatch):
     app = _run(EMBEDDING_PAGE)
     assert not app.exception, f"page raised: {[e.value for e in app.exception]}"
     assert "Could not reach ChromaDB" in app.error[0].value
+
+
+def test_embedding_page_explains_an_index_built_by_an_older_version(monkeypatch):
+    def index_without_tickers(collection):
+        raise KeyError("ticker")
+
+    monkeypatch.setattr(store, "get_collection", lambda: None)
+    monkeypatch.setattr(search, "list_documents", index_without_tickers)
+
+    app = _run(EMBEDDING_PAGE)
+
+    assert not app.exception, f"page raised: {[e.value for e in app.exception]}"
+    assert "make reindex" in app.error[0].value
 
 
 def test_embedding_page_asks_for_the_user_agent_only_when_missing(monkeypatch, sec_collection):
@@ -917,3 +933,79 @@ def test_agent_page_how_it_works_shows_the_last_search_in_numbers(monkeypatch):
     funnel = next(t.value for t in how_it_works.text if t.value.startswith("Front pages"))
     assert "pages read: 1" in funnel
     assert "script" not in funnel
+
+
+def test_agent_page_answer_cant_load_an_image_or_hide_a_link(monkeypatch):
+    _script_model(
+        monkeypatch,
+        [_reply("Costs $5 ![x](http://attacker.test/?q=1) and [safe](http://attacker.test) <b>")],
+    )
+    app = _run(AGENT_PAGE)
+    app.chat_input[0].set_value("How much?").run()
+
+    answer = next(block.value for block in app.markdown if "attacker.test" in block.value)
+    assert answer == (
+        r"Costs \$5 !\[x](http://attacker.test/?q=1) and \[safe](http://attacker.test) \<b>"
+    )
+
+
+def test_agent_page_keeps_the_answer_when_a_click_interrupts_the_script(monkeypatch):
+    """A click stops the script at its next st.* call, which here is the spinner closing."""
+    real_spinner = st.spinner
+
+    @contextmanager
+    def spinner_interrupted_by_a_click(text, **kwargs):
+        with real_spinner(text, **kwargs):
+            yield
+        if text == "Thinking...":
+            raise StopException()
+
+    _script_model(monkeypatch, [_reply("The answer survives.")])
+    app = _run(AGENT_PAGE)
+    monkeypatch.setattr(st, "spinner", spinner_interrupted_by_a_click)
+    app.chat_input[0].set_value("A question?").run()
+
+    app.run()
+
+    assert not app.exception, f"page raised: {[e.value for e in app.exception]}"
+    assert any(block.value == "A question?" for block in app.markdown)
+    assert any(block.value == "The answer survives." for block in app.markdown)
+    assert len(app.session_state.agent_calls) == 1
+    assert app.session_state.agent_messages[-1]["content"] == "The answer survives."
+
+
+def test_agent_page_failed_model_call_leaves_no_trace_of_the_question(monkeypatch):
+    def model_is_down(request):
+        raise ConnectionError("Ollama is down")
+
+    monkeypatch.setattr(loop, "call_model", model_is_down)
+    app = _run(AGENT_PAGE)
+    app.chat_input[0].set_value("A question?").run()
+
+    assert "Model call failed" in app.error[0].value
+    assert app.session_state.agent_chat == []
+    assert [message["role"] for message in app.session_state.agent_messages] == ["system"]
+
+
+def test_agent_page_card_shows_the_refreshed_price_approve_would_use(monkeypatch):
+    _script_model(
+        monkeypatch,
+        [_reply(tool_calls=[("propose_trade", {"ticker": "NVDA", "side": "buy", "quantity": 10})])],
+    )
+    app = _run(AGENT_PAGE)
+    app.chat_input[0].set_value("Buy 10 NVDA shares.").run()
+    assert any("at USD 200.00 = USD 2,000.00" in text.value for text in app.text)
+
+    monkeypatch.setattr(
+        market,
+        "_download",
+        lambda tickers: {
+            ticker: [["2026-10-30", "200.00"], ["2026-10-31", "210.00"]] for ticker in tickers
+        },
+    )
+    next(button for button in app.button if button.label == "Refresh prices").click().run()
+
+    assert not app.exception, f"page raised: {[e.value for e in app.exception]}"
+    card = next(text.value for text in app.text if text.value.startswith("buy 10 NVDA"))
+    assert "at USD 210.00 = USD 2,100.00" in card
+    assert "Proposed at USD 200.00" in card

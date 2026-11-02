@@ -6,9 +6,9 @@ Buttons use callbacks because a callback runs before the script does, so a click
 already changed the portfolio by the time anything on the page is drawn.
 """
 
-import copy
 import json
 import os
+import re
 from dataclasses import asdict
 
 import httpx
@@ -99,8 +99,13 @@ def theme() -> str:
 
 
 def markdown_safe(text: str) -> str:
-    # Streamlit reads "$...$" as a formula, which garbles any answer with two prices in it.
-    return text.replace("$", r"\$")
+    """Keep the model's bold and lists, but nothing that can fetch a URL or disguise the text.
+
+    An answer can repeat filing text, so it is untrusted. Every image, link and colored span
+    needs a "[", and every autolink and tag a "<". Streamlit reads "$...$" as a formula, which
+    garbles any answer with two prices in it. Backslashes first, so none can undo an escape.
+    """
+    return re.sub(r"([\\$\[<])", r"\\\1", text)
 
 
 # --- 1. Page header -----------------------------------------------------------
@@ -164,6 +169,37 @@ def new_conversation() -> None:
     st.session_state.agent_calls = []
     st.session_state.agent_retrieved_pages = {}
     st.session_state.agent_turns_dropped = 0
+
+
+def record_turn(
+    question: str, turn_messages: list[dict], result: loop.TurnResult, context: AgentContext
+) -> None:
+    """Save everything a finished turn changed, all at once.
+
+    Streamlit only stops a script for a click at an st.* call, and there is none in here. So
+    a click during a long turn can't leave the model remembering an answer the chat lost.
+    """
+    evidence = citations.check_answer(result.answer, context.retrieved_pages)
+    messages[:] = turn_messages
+    calls.extend(result.calls)
+    chat.append({"role": "user", "text": question})
+    chat.append(
+        {
+            "role": "assistant",
+            # Its position in the chat, which keeps each answer's widgets apart.
+            "id": len(chat),
+            "text": result.answer,
+            "steps": [asdict(step) for step in result.steps],
+            "evidence": evidence,
+            "uncited_pages": []
+            if evidence
+            else citations.pages_read(result.steps, context.retrieved_pages),
+        }
+    )
+    if result.turns_dropped:
+        st.session_state.agent_turns_dropped = (
+            st.session_state.get("agent_turns_dropped", 0) + result.turns_dropped
+        )
 
 
 def record_decision(outcome: approval.ApprovalOutcome) -> None:
@@ -348,14 +384,11 @@ def show_chat_item(item: dict) -> None:
         show_steps(item.get("steps", []))
 
 
-def show_pending_trade(trade: dict, total_value) -> None:
+def show_pending_trade(trade: dict, current_prices: dict, total_value) -> None:
     with st.container(border=True):
         st.markdown(f"#### ✋ Trade #{trade['id']} needs your approval")
-        value = float(trade["value"])
-        share = f"{value / float(total_value) * 100:.2f}%" if total_value else "unknown"
         st.text(
-            f"{trade['side']} {trade['quantity']} {trade['ticker']} "
-            f"at USD {float(trade['price']):,.2f} = USD {value:,.2f} ({share} of the portfolio)"
+            approval.describe_pending_trade(trade, current_prices.get(trade["ticker"]), total_value)
         )
         left, right, _ = st.columns([1, 1, 4])
         with left:
@@ -592,49 +625,28 @@ with conversation:
         show_chat_item(item)
 
     if question:
-        chat.append({"role": "user", "text": question})
-        show_chat_item(chat[-1])
+        show_chat_item({"role": "user", "text": question})
 
-        # Restored if the model call fails, so a retry doesn't send the question twice.
-        history_before = copy.deepcopy(messages)
-        messages.append({"role": "user", "content": question})
+        # A copy until the turn succeeds, so a failed call leaves nothing to undo.
+        turn_messages = [*messages, {"role": "user", "content": question}]
         context = AgentContext(conn, snapshot, st.session_state.agent_retrieved_pages)
 
         try:
             with st.spinner("Thinking..."):
                 result = loop.run_turn(
-                    messages,
+                    turn_messages,
                     context,
-                    turn_number=sum(item["role"] == "user" for item in chat),
+                    turn_number=sum(item["role"] == "user" for item in chat) + 1,
                     previous_messages=calls[-1].request["messages"] if calls else None,
                     first_call_number=len(calls) + 1,
                 )
+                # Before the spinner closes, because closing it is where a click can stop us.
+                record_turn(question, turn_messages, result, context)
         # The ollama client turns "server unreachable" into a builtin ConnectionError.
         except (ConnectionError, httpx.HTTPError, ResponseError) as exc:
-            messages[:] = history_before
-            chat.pop()
             st.error(f"Model call failed: {exc}. Check the Stack Health page.")
         else:
-            calls.extend(result.calls)
-            evidence = citations.check_answer(result.answer, context.retrieved_pages)
-            chat.append(
-                {
-                    "role": "assistant",
-                    # Its position in the chat, which keeps each answer's widgets apart.
-                    "id": len(chat),
-                    "text": result.answer,
-                    "steps": [asdict(step) for step in result.steps],
-                    "evidence": evidence,
-                    "uncited_pages": []
-                    if evidence
-                    else citations.pages_read(result.steps, context.retrieved_pages),
-                }
-            )
             show_chat_item(chat[-1])
-            if result.turns_dropped:
-                st.session_state.agent_turns_dropped = (
-                    st.session_state.get("agent_turns_dropped", 0) + result.turns_dropped
-                )
 
     # Read after the turn above, so a trade the model just proposed shows straight away.
     positions = portfolio.read_positions(conn)
@@ -642,7 +654,7 @@ with conversation:
     total_value = portfolio.total_value(positions, prices)
 
     for trade in portfolio.read_pending_trades(conn):
-        show_pending_trade(dict(trade), total_value)
+        show_pending_trade(dict(trade), prices, total_value)
 
     if calls:
         st.caption(f"messages sent this turn: {len(calls[-1].request['messages'])}")

@@ -6,6 +6,7 @@ against the positions and prices as they are at the moment of the click.
 
 import sqlite3
 from dataclasses import dataclass
+from decimal import Decimal
 
 from yunex_demo.agent import portfolio
 from yunex_demo.agent.hooks import APPROVAL_HOOKS, HookState, ToolCall, run_pre_hooks
@@ -25,6 +26,28 @@ class ApprovalOutcome:
 
 def _note(text: str) -> str:
     return f"{APPROVAL_NOTE_PREFIX} {text}"
+
+
+def describe_pending_trade(trade: dict, current_price: Decimal | None, total_value: Decimal) -> str:
+    """What the human reads before deciding.
+
+    Approving executes at the current price, so that is the price they must see, and not
+    only the one stored when the trade was proposed.
+    """
+    order = f"{trade['side']} {trade['quantity']} {trade['ticker']}"
+    proposed_price = Decimal(trade["price"])
+    if current_price is None:
+        return (
+            f"{order}, proposed at USD {proposed_price:,.2f}. "
+            "There is no current price, so it can't be approved."
+        )
+
+    value = trade["quantity"] * current_price
+    share = f"{value / total_value * 100:.2f}%" if total_value else "unknown"
+    text = f"{order} at USD {current_price:,.2f} = USD {value:,.2f} ({share} of the portfolio)"
+    if current_price != proposed_price:
+        text += f"\nProposed at USD {proposed_price:,.2f}. Approving uses the price above."
+    return text
 
 
 def approve_trade(

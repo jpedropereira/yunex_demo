@@ -171,6 +171,7 @@ def search_filing(arguments: dict, context: AgentContext) -> dict:
     results = []
     quotes_kept = []
     pages_reviewed = 0
+    unusable_pages = 0
     for hit in hits:
         if pages_reviewed == SEARCH_RESULTS:
             break
@@ -187,11 +188,20 @@ def search_filing(arguments: dict, context: AgentContext) -> dict:
         review = quotes.review_page(question, hit.text, cite, hit.similarity)
         quotes.set_aside_repeats(review, quotes_kept)
         context.page_reviews.append(review)
+        if review.outcome == quotes.UNUSABLE_REPLY:
+            unusable_pages += 1
         if review.kept:
             _remember_page(hit, cite, context)
             results.append({"cite": cite, "quotes": review.kept})
             quotes_kept.extend(review.kept)
 
+    # A page nobody could read says nothing about the filing, so don't let the agent claim it does.
+    if not results and unusable_pages:
+        return {
+            "status": "error",
+            "reason": f"{unusable_pages} of {pages_reviewed} pages couldn't be read, so this "
+            f"doesn't show whether {company}'s 10-K covers the question.",
+        }
     if not results:
         return {
             "status": "no_relevant_pages",

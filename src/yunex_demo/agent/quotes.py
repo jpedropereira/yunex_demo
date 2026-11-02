@@ -20,6 +20,8 @@ from yunex_demo.workflow.pipeline import fence
 # Enough for three long sentences. A reply cut off here isn't valid JSON, so it loses the page.
 MOST_TOKENS_PER_PAGE = 600
 
+UNUSABLE_REPLY = "unusable reply"
+
 
 class Quotes(BaseModel):
     quotes: list[str]
@@ -70,14 +72,21 @@ def ask_model(prompt: str) -> str:
     return response.message.content or ""
 
 
-def _plain_spacing(text: str) -> str:
-    return " ".join(text.split())
+def plain_quotes(text: str) -> str:
+    """Filings use curly quotes and models mostly don't, which shouldn't count as a difference."""
+    for curly, plain in (("’", "'"), ("‘", "'"), ("“", '"'), ("”", '"')):
+        text = text.replace(curly, plain)
+    return text
+
+
+def _comparable(text: str) -> str:
+    return " ".join(plain_quotes(text).split())
 
 
 def _is_on_page(quote: str, page_text: str) -> bool:
     # The fence escapes "<", so the model sees and copies it escaped.
-    quote = _plain_spacing(quote.replace("&lt;", "<"))
-    return bool(quote) and quote in _plain_spacing(page_text)
+    quote = _comparable(quote.replace("&lt;", "<"))
+    return bool(quote) and quote in _comparable(page_text)
 
 
 def _outcome(kept: list[str], discarded: list[str], repeated: list[str]) -> str:
@@ -103,7 +112,7 @@ def review_page(question: str, page_text: str, cite: str, similarity: float) -> 
     try:
         proposed = Quotes.model_validate_json(reply).quotes
     except ValidationError:
-        return PageReview(cite, similarity, "unusable reply", [], [], prompt, reply, seconds)
+        return PageReview(cite, similarity, UNUSABLE_REPLY, [], [], prompt, reply, seconds)
 
     kept = [quote for quote in proposed if _is_on_page(quote, page_text)]
     discarded = [quote for quote in proposed if quote not in kept]
@@ -120,8 +129,8 @@ def set_aside_repeats(review: PageReview, already_kept: list[str]) -> None:
     """
     new_quotes = []
     for quote in review.kept:
-        plain_quote = _plain_spacing(quote)
-        if any(plain_quote in _plain_spacing(kept) for kept in [*already_kept, *new_quotes]):
+        plain_quote = _comparable(quote)
+        if any(plain_quote in _comparable(kept) for kept in [*already_kept, *new_quotes]):
             review.repeated.append(quote)
         else:
             new_quotes.append(quote)
