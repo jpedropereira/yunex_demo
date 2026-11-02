@@ -17,12 +17,12 @@ This demo builds up in five steps, each a page in the sidebar:
    schema, no grounding. The baseline everything after it improves on.
 2. **One-off** -- a single schema-constrained call. Invalid output is made
    impossible rather than merely unlikely.
-3. **Workflow** -- a deterministic pipeline that classifies, extracts, then
-   acts, validating every step and abstaining instead of guessing.
+3. **Workflow** -- a fixed pipeline that classifies, extracts, then acts,
+   validating every step and abstaining instead of guessing.
 4. **Embedding search** -- embed a question and pull the top-k most similar
    chunks from the vector store, to see what retrieval actually returns.
-5. **RAG agent** -- retrieval over a local vector store, with a tool-using
-   agent that cites what it used.
+5. **Agent** -- the model chooses the tools, while code runs and guards every
+   call, and a human approves anything that changes the portfolio.
 
 The whole stack is local: **Ollama** for inference, **ChromaDB** for vectors,
 **EmbeddingGemma** for embeddings. Nothing leaves the machine.

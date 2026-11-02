@@ -1,9 +1,18 @@
 """SEC filing search: URL safety, parsing, ingest and search. No network and no Ollama."""
 
+import chromadb
 import httpx
 import pytest
 from bs4 import BeautifulSoup
-from conftest import ALPHA_ACCESSION, BETA_ACCESSION, filing_html, filing_url
+from conftest import (
+    ALPHA_ACCESSION,
+    APPLE_CIK,
+    BETA_ACCESSION,
+    NVIDIA_CIK,
+    fake_latest_10k_url,
+    filing_html,
+    filing_url,
+)
 
 from yunex_demo.config import settings
 from yunex_demo.sec import filing, ingest, search, store
@@ -48,11 +57,6 @@ def test_rejects_everything_else(url):
         filing.parse_edgar_url(url)
 
 
-def test_every_sample_filing_passes_validation():
-    accessions = [filing.parse_edgar_url(sample.url)[1] for sample in ingest.SAMPLE_FILINGS]
-    assert len(set(accessions)) == len(ingest.SAMPLE_FILINGS)
-
-
 def test_a_padded_cik_is_rewritten_because_the_sec_would_redirect_it():
     padded = "https://www.sec.gov/Archives/edgar/data/0000789019/000119312526323660/msft.htm"
     assert filing.canonical_edgar_url(padded) == padded.replace("0000789019", "789019")
@@ -71,7 +75,6 @@ def test_reads_metadata_inside_and_outside_the_hidden_header():
     metadata = filing.read_metadata(_soup(filing_html("ALPHA CORP", [WORDS])))
     assert metadata == {
         "company": "ALPHA CORP",
-        "ticker": "TICK",
         "form": "10-K",
         "period_end": "January 25, 2026",
         "fiscal_year": "2026",
@@ -91,6 +94,45 @@ def test_a_missing_fact_is_an_empty_string():
 
 
 # --- Splitting into pages -----------------------------------------------------
+
+
+def _numbered_filing(page_endings: list[str]) -> str:
+    pages = [f"<div>{WORDS}{ending}</div>" for ending in page_endings]
+    return f"<html><body>{'<hr style="page-break-after:always"/>'.join(pages)}</body></html>"
+
+
+def _printed_pages(page_endings: list[str]) -> list[int]:
+    chunks, _ = filing.split_pages(_soup(_numbered_filing(page_endings)))
+    return [chunk.printed_page for chunk in chunks]
+
+
+def test_printed_pages_count_from_the_filings_own_page_one():
+    """As in Apple's 10-K, where a cover and contents come before page 1."""
+    assert _printed_pages(["cover", "contents", "1", "2", "3", "4"]) == [0, 0, 1, 2, 3, 4]
+
+
+def test_printed_pages_understand_a_number_with_a_full_stop_or_a_footer():
+    assert _printed_pages(["cover", "1.", "2.", "3."]) == [0, 1, 2, 3]
+    assert _printed_pages(["Form 10-K | 1", "Form 10-K | 2", "Form 10-K | 3"]) == [1, 2, 3]
+
+
+def test_printed_pages_ignore_a_page_that_ends_in_some_other_number():
+    assert _printed_pages(["cover", "1", "2", "in 2025", "4", "5"]) == [0, 1, 2, 3, 4, 5]
+
+
+def test_without_page_numbers_the_printed_page_is_the_position():
+    assert _printed_pages(["a", "b", "c"]) == [1, 2, 3]
+
+
+def test_numbers_most_pages_dont_agree_on_are_not_page_numbers():
+    assert _printed_pages(["in 40", "in 90", "in 7", "d", "e"]) == [1, 2, 3, 4, 5]
+
+
+def test_every_part_of_a_split_page_has_the_same_printed_page():
+    long_page = "word " * 2000
+    chunks, _ = filing.split_pages(_soup(_numbered_filing(["cover", f"{long_page} 1", "2", "3"])))
+    assert {chunk.printed_page for chunk in chunks if chunk.page == 2} == {1}
+    assert len([chunk for chunk in chunks if chunk.page == 2]) > 1
 
 
 def test_three_breaks_give_four_pages_with_the_right_text():
@@ -311,28 +353,29 @@ def test_ingest_stores_one_chunk_per_page_with_ids_and_metadata(monkeypatch, sec
     assert "title:" not in stored["documents"][page_one], "the prefix must not be stored"
     assert stored["metadatas"][page_one] == {
         "company": "ALPHA CORP",
-        "ticker": "TICK",
+        "ticker": "NVDA",
         "form": "10-K",
         "period_end": "January 25, 2026",
         "fiscal_year": "2026",
         "doc_id": ALPHA_ACCESSION,
-        "cik": "1234",
+        "cik": str(NVIDIA_CIK),
         "source_url": url,
         "page": 1,
         "part": 1,
+        "printed_page": 1,
     }
 
 
 def test_ingest_fetches_and_stores_the_canonical_url(monkeypatch, sec_collection):
     fetched = _serve(monkeypatch, filing_html("ALPHA CORP", [WORDS, WORDS]))
-    padded = f"https://www.sec.gov/Archives/edgar/data/0001234/{ALPHA_ACCESSION}/filing.htm"
+    padded = f"https://www.sec.gov/Archives/edgar/data/000{NVIDIA_CIK}/{ALPHA_ACCESSION}/filing.htm"
 
     ingest.ingest_filing(padded, sec_collection)
 
     assert fetched == [filing_url(ALPHA_ACCESSION)]
     metadata = sec_collection.get(include=["metadatas"])["metadatas"][0]
     assert metadata["source_url"] == filing_url(ALPHA_ACCESSION)
-    assert metadata["cik"] == "1234"
+    assert metadata["cik"] == str(NVIDIA_CIK)
 
 
 def test_ingest_embeds_documents_with_the_title_prefix(monkeypatch, sec_collection):
@@ -413,23 +456,139 @@ def test_ingest_reports_progress_per_batch(monkeypatch, sec_collection):
     assert progress == [(2, 5), (4, 5), (5, 5)]
 
 
-def test_the_command_line_indexes_every_sample_and_survives_a_failure(
+def test_the_command_line_indexes_every_company_and_survives_a_failure(
     monkeypatch, sec_collection, capsys
 ):
-    bad_url = ingest.SAMPLE_FILINGS[1].url
+    bad_url = fake_latest_10k_url(APPLE_CIK)
 
     def fake_fetch(url):
         if url == bad_url:
             raise ingest.FetchError("The SEC returned HTTP 500.")
         return filing_html("ALPHA CORP", [WORDS, WORDS])
 
+    monkeypatch.setattr(ingest, "latest_10k_url", fake_latest_10k_url)
     monkeypatch.setattr(ingest, "fetch_filing", fake_fetch)
     monkeypatch.setattr(store, "get_collection", lambda: sec_collection)
     monkeypatch.setattr("sys.argv", ["ingest", "--all"])
 
     assert ingest.main() == 1, "a failure must show in the exit code"
     assert "HTTP 500" in capsys.readouterr().err
-    assert len(search.list_documents(sec_collection)) == len(ingest.SAMPLE_FILINGS) - 1
+    assert len(search.list_documents(sec_collection)) == len(settings.agent_filings) - 1
+
+
+# --- One 10-K per company ---
+
+
+def _dated_filing(period_end: str) -> str:
+    return filing_html("ALPHA CORP", [WORDS, WORDS]).replace("January 25, 2026", period_end)
+
+
+def test_a_filing_from_a_company_outside_the_map_is_rejected(monkeypatch, sec_collection):
+    fetched = _serve(monkeypatch, filing_html("TESLA", [WORDS]))
+    with pytest.raises(ValueError, match="Only filings from these companies"):
+        ingest.ingest_filing(filing_url(ALPHA_ACCESSION, cik=1318605), sec_collection)
+    assert not fetched, "it must be rejected before anything is fetched"
+    assert sec_collection.count() == 0
+
+
+def test_the_ticker_comes_from_the_map_not_the_filing(monkeypatch, sec_collection):
+    """The filing's own tag says TICK, because a filing can list several share classes."""
+    _serve(monkeypatch, filing_html("ALPHA CORP", [WORDS]))
+    ingest.ingest_filing(filing_url(ALPHA_ACCESSION, APPLE_CIK), sec_collection)
+    assert sec_collection.get(include=["metadatas"])["metadatas"][0]["ticker"] == "AAPL"
+
+
+def test_indexing_a_newer_10k_removes_the_older_ones_chunks(monkeypatch, sec_collection):
+    _serve(monkeypatch, _dated_filing("January 25, 2026"))
+    ingest.ingest_filing(filing_url(ALPHA_ACCESSION), sec_collection)
+
+    _serve(monkeypatch, _dated_filing("January 31, 2027"))
+    result = ingest.ingest_filing(filing_url(BETA_ACCESSION), sec_collection)
+
+    assert result.replaced_older
+    documents = search.list_documents(sec_collection)
+    assert [document.doc_id for document in documents] == [BETA_ACCESSION]
+    assert documents[0].period_end == "January 31, 2027"
+
+
+def test_a_newer_10k_of_one_company_leaves_the_other_company_alone(monkeypatch, sec_collection):
+    _serve(monkeypatch, _dated_filing("January 25, 2026"))
+    ingest.ingest_filing(filing_url(ALPHA_ACCESSION), sec_collection)
+    result = ingest.ingest_filing(filing_url(BETA_ACCESSION, APPLE_CIK), sec_collection)
+
+    assert not result.replaced_older
+    assert len(search.list_documents(sec_collection)) == 2
+
+
+def test_an_older_10k_cannot_push_out_the_latest_one(monkeypatch, sec_collection):
+    _serve(monkeypatch, _dated_filing("January 25, 2026"))
+    ingest.ingest_filing(filing_url(ALPHA_ACCESSION), sec_collection)
+
+    _serve(monkeypatch, _dated_filing("January 26, 2025"))
+    with pytest.raises(ValueError, match="newer 10-K for NVDA"):
+        ingest.ingest_filing(filing_url(BETA_ACCESSION), sec_collection)
+
+    assert [d.doc_id for d in search.list_documents(sec_collection)] == [ALPHA_ACCESSION]
+
+
+def test_a_10q_cannot_replace_the_10k(monkeypatch, sec_collection):
+    _serve(monkeypatch, _dated_filing("January 25, 2026"))
+    ingest.ingest_filing(filing_url(ALPHA_ACCESSION), sec_collection)
+
+    html = _dated_filing("April 26, 2026").replace(">10-K<", ">10-Q<")
+    _serve(monkeypatch, html)
+    with pytest.raises(ValueError, match="Only 10-K filings"):
+        ingest.ingest_filing(filing_url(BETA_ACCESSION), sec_collection)
+
+    assert [d.doc_id for d in search.list_documents(sec_collection)] == [ALPHA_ACCESSION]
+
+
+def _submissions(forms: list[str], document: str = "doc-20260125.htm") -> dict:
+    return {
+        "filings": {
+            "recent": {
+                "form": forms,
+                "accessionNumber": [f"0001045810-26-{n:06d}" for n in range(len(forms))],
+                "primaryDocument": [document] * len(forms),
+            }
+        }
+    }
+
+
+def test_the_latest_10k_is_the_first_exact_match_in_the_submissions(monkeypatch):
+    calls = []
+
+    def fake_get(url, **kwargs):
+        calls.append((url, kwargs))
+        return httpx.Response(200, json=_submissions(["8-K", "10-K/A", "10-K", "10-K"]))
+
+    monkeypatch.setattr(settings, "sec_user_agent", "Test Name test@example.com")
+    monkeypatch.setattr(ingest.httpx, "get", fake_get)
+
+    url = ingest.latest_10k_url(NVIDIA_CIK)
+
+    assert url == (
+        "https://www.sec.gov/Archives/edgar/data/1045810/000104581026000002/doc-20260125.htm"
+    )
+    assert calls[0][0] == "https://data.sec.gov/submissions/CIK0001045810.json"
+    assert calls[0][1]["headers"]["User-Agent"] == "Test Name test@example.com"
+    assert calls[0][1]["follow_redirects"] is False
+
+
+def test_a_document_name_from_the_sec_is_validated_like_a_pasted_url(monkeypatch):
+    response = httpx.Response(200, json=_submissions(["10-K"], document="../../evil.htm"))
+    monkeypatch.setattr(settings, "sec_user_agent", "Test Name test@example.com")
+    monkeypatch.setattr(ingest.httpx, "get", lambda url, **kwargs: response)
+    with pytest.raises(ValueError, match="Not an EDGAR document URL"):
+        ingest.latest_10k_url(NVIDIA_CIK)
+
+
+def test_a_company_with_no_recent_10k_says_so(monkeypatch):
+    response = httpx.Response(200, json=_submissions(["8-K", "10-Q"]))
+    monkeypatch.setattr(settings, "sec_user_agent", "Test Name test@example.com")
+    monkeypatch.setattr(ingest.httpx, "get", lambda url, **kwargs: response)
+    with pytest.raises(ingest.FetchError, match="no recent 10-K"):
+        ingest.latest_10k_url(NVIDIA_CIK)
 
 
 # --- Search -------------------------------------------------------------------
@@ -447,11 +606,13 @@ def test_search_scores_are_cosine_similarity(monkeypatch, sec_collection):
     """A vector identical to the query is 1.0, an orthogonal one is 0.0."""
     metadata = {
         "company": "ALPHA CORP",
+        "ticker": "NVDA",
         "form": "10-K",
         "fiscal_year": "2026",
         "source_url": filing_url(ALPHA_ACCESSION),
         "page": 1,
         "part": 1,
+        "printed_page": 1,
         "doc_id": ALPHA_ACCESSION,
     }
     sec_collection.upsert(
@@ -496,9 +657,75 @@ def test_list_documents_groups_chunks_by_filing(two_filings):
     ]
     assert [document.pages for document in documents] == [12, 12]
     assert documents[0].source_url == filing_url(ALPHA_ACCESSION)
+    assert [document.ticker for document in documents] == ["NVDA", "AAPL"]
 
 
 def test_list_documents_counts_a_split_page_once(monkeypatch, sec_collection):
     _serve(monkeypatch, filing_html("ALPHA CORP", ["word " * 1500, WORDS]))
     ingest.ingest_filing(filing_url(ALPHA_ACCESSION), sec_collection)
     assert search.list_documents(sec_collection)[0].pages == 2
+
+
+@pytest.mark.parametrize(
+    ("printed_page", "part", "label"),
+    [(12, 1, "page 12"), (12, 2, "page 12, part 2"), (0, 1, "front pages")],
+)
+def test_a_search_hit_labels_its_page(printed_page, part, label):
+    hit = search.SearchHit(0.7, "", "", "", "", "", 3, part, "", printed_page)
+    assert hit.page_label == label
+
+
+# --- make reindex ---
+
+
+@pytest.fixture
+def live_index(monkeypatch, sec_collection):
+    """sec_collection as the live index, in the in-memory Chroma that store now connects to."""
+    monkeypatch.setattr(store, "_client", chromadb.EphemeralClient)
+    monkeypatch.setattr(settings, "sec_collection", sec_collection.name)
+    monkeypatch.setattr(ingest, "latest_10k_url", fake_latest_10k_url)
+    monkeypatch.setattr("sys.argv", ["ingest", "--rebuild"])
+    monkeypatch.setattr(ingest, "fetch_filing", lambda url: filing_html("ALPHA CORP", [WORDS]))
+    ingest.ingest_filing(filing_url(ALPHA_ACCESSION), sec_collection)
+    return sec_collection
+
+
+def test_a_rebuild_replaces_the_index_with_every_filing(live_index):
+    assert ingest.main() == 0
+
+    documents = search.list_documents(store.get_collection())
+    assert len(documents) == len(settings.agent_filings)
+    assert ALPHA_ACCESSION not in {document.doc_id for document in documents}
+
+
+def test_a_rebuild_that_fails_leaves_the_index_untouched(monkeypatch, live_index, capsys):
+    def sec_fails_for_apple(cik):
+        if cik == APPLE_CIK:
+            raise ingest.FetchError("Could not reach the SEC.")
+        return fake_latest_10k_url(cik)
+
+    monkeypatch.setattr(ingest, "latest_10k_url", sec_fails_for_apple)
+
+    assert ingest.main() == 1
+    assert "The current index was not changed" in capsys.readouterr().err
+    documents = search.list_documents(store.get_collection())
+    assert [document.doc_id for document in documents] == [ALPHA_ACCESSION]
+
+
+def test_a_rebuild_works_with_no_index_yet(live_index):
+    chromadb.EphemeralClient().delete_collection(settings.sec_collection)
+
+    assert ingest.main() == 0
+    assert len(search.list_documents(store.get_collection())) == len(settings.agent_filings)
+
+
+def test_a_rebuild_clears_what_a_failed_one_left_behind(live_index):
+    store.empty_rebuild_collection().upsert(
+        ids=["stale"],
+        embeddings=[[0.0] * 768],
+        documents=["stale"],
+        metadatas=[{"doc_id": "stale", "ticker": "NVDA"}],
+    )
+
+    assert ingest.main() == 0
+    assert store.get_collection().get(ids=["stale"])["ids"] == []

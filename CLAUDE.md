@@ -70,8 +70,10 @@ outputs small (schema-constrained), and context under `OLLAMA_NUM_CTX` (8192).
 - **Keep the demo point visible.** Each UI page is one beat of the talk; the
   technique it shows (schema-constrained output, validation, grounding, RAG)
   should be easy to spot, not buried under plumbing.
-- **Deterministic by default.** Generation uses `temperature=0` and a fixed
-  seed: a reliability talk can't have a demo that answers differently each run.
+- **Guards over repeatability.** Generation uses `temperature=0` and a fixed
+  seed to reduce variation, but answers can still differ between runs (measured
+  on the Agent page). Don't claim otherwise. Reliability comes from code that
+  guards and validates the output, so never depend on an exact model reply.
 - **Few dependencies.** Reach for the standard library or what's already in
   `pyproject.toml` before adding a package.
 

@@ -1,6 +1,6 @@
 """Find the pages closest in meaning to a question. No LLM: results come only from the database.
 
-The agent page can reuse ``search`` as its ``search_documents`` tool.
+The agent's ``search_filing`` tool calls ``search`` with a ticker.
 """
 
 from dataclasses import dataclass
@@ -15,19 +15,29 @@ class SearchHit:
     similarity: float
     text: str
     company: str
+    ticker: str
     form: str
     fiscal_year: str
     page: int
     part: int
     source_url: str
+    printed_page: int
+
+    @property
+    def page_label(self) -> str:
+        # Printed page 0 means the cover and contents, which have no number in the filing.
+        label = f"page {self.printed_page}" if self.printed_page else "front pages"
+        return f"{label}, part {self.part}" if self.part > 1 else label
 
 
 @dataclass(frozen=True)
 class IndexedDocument:
     doc_id: str
     company: str
+    ticker: str
     form: str
     fiscal_year: str
+    period_end: str
     pages: int
     source_url: str
 
@@ -41,13 +51,19 @@ def search(
     k: int,
     collection: chromadb.Collection,
     doc_id: str | None = None,
+    ticker: str | None = None,
 ) -> list[SearchHit]:
-    """Return the ``k`` most similar chunks, best first, optionally from one document."""
+    """Return the ``k`` most similar chunks, best first, optionally from one document or company."""
     query_vector = store.embed_texts([store.query_prompt(question)])[0]
 
     # Chroma applies the filter before ranking: k results from this document, rather
-    # than the overall top k with the other documents' results thrown away.
-    where = {"doc_id": doc_id} if doc_id else None
+    # than the overall top k with the other documents' results thrown away. So a page from
+    # another company can never be a candidate, however similar its text is.
+    where = None
+    if doc_id:
+        where = {"doc_id": doc_id}
+    elif ticker:
+        where = {"ticker": ticker}
     results = collection.query(
         query_embeddings=[query_vector],
         n_results=k,
@@ -65,11 +81,13 @@ def search(
                 similarity=round(1 - distance, 2),
                 text=text,
                 company=metadata["company"],
+                ticker=metadata["ticker"],
                 form=metadata["form"],
                 fiscal_year=metadata["fiscal_year"],
                 page=metadata["page"],
                 part=metadata["part"],
                 source_url=metadata["source_url"],
+                printed_page=metadata["printed_page"],
             )
         )
     return hits
@@ -90,8 +108,10 @@ def list_documents(collection: chromadb.Collection) -> list[IndexedDocument]:
         IndexedDocument(
             doc_id=doc_id,
             company=metadata["company"],
+            ticker=metadata["ticker"],
             form=metadata["form"],
             fiscal_year=metadata["fiscal_year"],
+            period_end=metadata["period_end"],
             pages=len(pages_by_doc[doc_id]),
             source_url=metadata["source_url"],
         )

@@ -10,17 +10,16 @@ no data leaving the laptop.
 | [ChromaDB](https://trychroma.com) | vector store for the retrieval demo |
 | [Streamlit](https://streamlit.io) | the UI, one page per demo beat |
 
-> **Status: infrastructure only.** The stack comes up and the **Stack Health**
-> page verifies it end to end. The **Bare chatbot** page talks to the model with
-> only a system prompt, and **Embedding search** finds pages of real SEC filings
-> by meaning; the remaining pages are stubs, planned separately.
+> **Status: all pages built.** The stack comes up and the **Stack Health** page
+> verifies it end to end. The other pages build up from a **Bare chatbot** to an
+> **Agent** that researches SEC filings and proposes trades behind guards.
 
 ---
 
 ## Indexing SEC filings
 
-The **Embedding search** page searches 10-K filings fetched from SEC EDGAR. The
-SEC asks automated clients to declare who they are, so add your own name and a
+The **Embedding search** and **Agent** pages search 10-K filings fetched from SEC
+EDGAR. The SEC asks automated clients to declare who they are, so add your own name and a
 real address to `.env`, which is gitignored:
 
 ```bash
@@ -31,13 +30,40 @@ Then restart the stack with `make up`, because the app reads this when its
 container starts, and index before the talk:
 
 ```bash
-make index-all    # NVIDIA, Apple, Microsoft, Alphabet and Amazon
+make index-all    # the latest 10-K of NVIDIA, Apple, Microsoft, Alphabet and Amazon
 make index-nvda   # just NVIDIA
 ```
 
-The page offers the same five as one-click buttons, and takes any other EDGAR
-URL. Indexing twice is safe: a filing that is already there is neither fetched nor
-embedded again. Searching needs no `SEC_USER_AGENT`, only indexing a new filing.
+The page offers the same five as one-click buttons, and takes a pasted EDGAR URL
+from those companies only. Each company keeps one 10-K: a newer one replaces the
+older, and an older one is refused. Indexing twice is safe: a filing that is
+already there is neither fetched nor embedded again. Searching needs no
+`SEC_USER_AGENT`, only indexing a new filing.
+
+Citations use the page number printed in the filing, which is stored when a filing
+is indexed. An index made by an older version has to be rebuilt, or the Embedding
+search page says it can't read it and searches fail with an error like
+`'printed_page'`. `make clean` also deletes the models, so use `make reindex`, which
+rebuilds beside the current index and only swaps if all five filings succeed.
+
+## The Agent page
+
+The **Agent** page needs those filings indexed, and fetches prices from Yahoo
+Finance when it opens. Yahoo is unofficial, so the last good prices are kept in the
+`agent_data` volume and used, labelled as cached, if it fails. With neither, research
+still works and trading is disabled. The portfolio lives in the same volume, and
+**Reset portfolio** restores it.
+
+Searches don't hand whole pages to the agent. A separate model call copies the helpful
+sentences from each of the top pages, and code keeps only those really on the page, so
+each search adds a few seconds and comparing two companies still fits the context.
+
+If tool calling is unreliable on E2B, try the larger model. No code changes:
+
+```bash
+make pull-e4b
+# then in .env: AGENT_MODEL=gemma4:e4b-it-qat, and restart with make up
+```
 
 ---
 

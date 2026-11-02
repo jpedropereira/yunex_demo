@@ -8,13 +8,14 @@ from functools import partial
 import streamlit as st
 
 from yunex_demo.config import settings
-from yunex_demo.sec import filing, ingest, search, store
+from yunex_demo.sec import ingest, search, store
 
 PREVIEW_WORDS = 60
+EXAMPLE_URL = "https://www.sec.gov/Archives/edgar/data/1045810/000104581026000021/nvda-20260125.htm"
 
 # Worded differently from the filings, so they only work by meaning: "How many people work
 # there?" has to find "42,000 employees". Chosen by reading the top 5 results on all five
-# sample 10-Ks, and keeping those that find relevant pages at most of the companies.
+# 10-Ks, and keeping those that find relevant pages at most of the companies.
 SUGGESTED_QUESTIONS = [
     "What happens if the US limits sales to China?",
     "How many people work there?",
@@ -48,7 +49,7 @@ except ingest.EXPECTED_ERRORS as exc:
     st.error(f"Could not reach ChromaDB: {exc} Check the Stack Health page.")
     st.stop()
 
-# --- 2. Ingest: one click for a sample filing, or paste any EDGAR URL ----------
+# --- 2. Ingest: one click for a company's latest 10-K, or paste a filing's URL -----
 st.header("Ingest")
 
 if not settings.sec_user_agent:
@@ -57,59 +58,60 @@ if not settings.sec_user_agent:
         "Filings that are already indexed can still be searched."
     )
 
-documents = search.list_documents(collection)
-pages_by_doc_id = {document.doc_id: document.pages for document in documents}
-urls_to_index = []
-missing_urls = []
+try:
+    documents = search.list_documents(collection)
+except ingest.EXPECTED_ERRORS as exc:
+    st.error(
+        "Could not read the search index. If an older version built it, rebuild it with "
+        "`make reindex`. Otherwise, check the Stack Health page."
+    )
+    st.text(str(exc))
+    st.stop()
 
-*sample_columns, index_all_column = st.columns(len(ingest.SAMPLE_FILINGS) + 1)
-for column, sample in zip(sample_columns, ingest.SAMPLE_FILINGS, strict=True):
-    _, accession = filing.parse_edgar_url(sample.url)
-    pages = pages_by_doc_id.get(accession)
-    if not pages:
-        missing_urls.append(sample.url)
+pages_by_ticker = {document.ticker: document.pages for document in documents}
+targets_to_index = []
+
+# The buttons stay clickable, because a company may have filed since. Only a click asks
+# the SEC: drawing this page must work offline.
+*company_columns, index_all_column = st.columns(len(settings.agent_filings) + 1)
+for column, agent_filing in zip(company_columns, settings.agent_filings, strict=True):
+    pages = pages_by_ticker.get(agent_filing.ticker)
     with column:
         clicked = st.button(
-            f"{sample.name} · {pages} pages" if pages else sample.name,
-            key=f"sample_{sample.name}",
+            f"{agent_filing.company} · {pages} pages" if pages else agent_filing.company,
+            key=f"latest_{agent_filing.ticker}",
             icon=":material/check:" if pages else ":material/download:",
-            disabled=bool(pages),
             width="stretch",
         )
     if clicked:
-        urls_to_index = [sample.url]
+        targets_to_index = [agent_filing.cik]
 
 with index_all_column:
-    if st.button(
-        "Index all",
-        key="index_all",
-        type="primary",
-        disabled=not missing_urls,
-        width="stretch",
-    ):
-        urls_to_index = missing_urls
+    if st.button("Index all", key="index_all", type="primary", width="stretch"):
+        targets_to_index = [agent_filing.cik for agent_filing in settings.agent_filings]
 
 pasted_url = st.text_input(
-    "Or paste another EDGAR document URL",
-    placeholder=ingest.SAMPLE_FILINGS[0].url,
+    "Or paste the URL of a 10-K from one of these companies",
+    placeholder=EXAMPLE_URL,
     key="url",
 )
 if st.button("Index", icon=":material/download:", key="index"):
-    urls_to_index = [pasted_url]
+    targets_to_index = [pasted_url]
 
-if urls_to_index:
+if targets_to_index:
     progress_bar = st.progress(0.0, text="Fetching the filing...")
 
     def show_progress(position: str, done: int, total: int) -> None:
         progress_bar.progress(done / total, text=f"{position}: embedded {done} of {total}")
 
     outcomes = []
-    for number, url in enumerate(urls_to_index, start=1):
-        position = f"Filing {number} of {len(urls_to_index)}"
+    for number, target in enumerate(targets_to_index, start=1):
+        position = f"Filing {number} of {len(targets_to_index)}"
         progress_bar.progress(0.0, text=f"{position}: fetching...")
 
         # A failed filing is reported, and the rest still get their turn.
         try:
+            url = target if isinstance(target, str) else ingest.latest_10k_url(target)
             outcomes.append(
                 ingest.ingest_filing(url, collection, on_progress=partial(show_progress, position))
             )
@@ -127,7 +129,10 @@ for outcome in st.session_state.pop("ingest_outcomes", []):
     elif outcome.already_indexed:
         st.success(f"Already indexed: {outcome.pages_indexed} pages")
     else:
-        st.success(f"Indexed {outcome.pages_indexed} pages, skipped {outcome.pages_skipped}.")
+        replaced = " Replaced the older 10-K." if outcome.replaced_older else ""
+        st.success(
+            f"Indexed {outcome.pages_indexed} pages, skipped {outcome.pages_skipped}.{replaced}"
+        )
         # Text from the filing, so never markdown.
         st.text(f"{outcome.company} · {outcome.form} · FY{outcome.fiscal_year}")
 
@@ -138,6 +143,7 @@ if documents:
                 "Company": document.company,
                 "Form": document.form,
                 "Year": document.fiscal_year,
+                "Period end": document.period_end,
                 "Pages": document.pages,
                 "URL": document.source_url,
             }
@@ -199,11 +205,8 @@ if question:
             # Cosine similarity can be negative, which st.progress rejects.
             st.progress(max(0.0, min(1.0, hit.similarity)))
 
-            page_label = f"page {hit.page}"
-            if hit.part > 1:
-                page_label += f", part {hit.part}"
             # Filing text is untrusted, so it goes through st.text, never markdown.
-            st.text(f"{hit.company} · {hit.form} · FY{hit.fiscal_year} · {page_label}")
+            st.text(f"{hit.company} · {hit.form} · FY{hit.fiscal_year} · {hit.page_label}")
 
             words = hit.text.split()
             preview = " ".join(words[:PREVIEW_WORDS])

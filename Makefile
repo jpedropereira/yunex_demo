@@ -15,7 +15,7 @@ OLLAMA_PORT  ?= 11434
 NVDA_10K_URL := https://www.sec.gov/Archives/edgar/data/1045810/000104581026000021/nvda-20260125.htm
 
 .DEFAULT_GOAL := help
-.PHONY: help up up-gpu up-external _up_local down pull warm health index-nvda index-all logs ps lint test test-live clean
+.PHONY: help up up-gpu up-external _up_local down pull warm health index-nvda index-all reindex pull-e4b logs ps lint test test-live clean
 
 help: ## Show available targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -63,8 +63,14 @@ health: ## Run the full stack check headlessly (exits non-zero on failure)
 index-nvda: ## Index NVIDIA's 10-K for the Embedding search page (needs SEC_USER_AGENT in .env)
 	$(COMPOSE) exec -T app python -m yunex_demo.sec.ingest $(NVDA_10K_URL)
 
-index-all: ## Index all five sample 10-Ks; already-indexed ones are skipped
+index-all: ## Index the latest 10-K of all five companies; already-indexed ones are skipped
 	$(COMPOSE) exec -T app python -m yunex_demo.sec.ingest --all
+
+reindex: ## Rebuild the search index from the SEC; keeps the old one if any filing fails (needs SEC_USER_AGENT in .env)
+	$(COMPOSE) exec -T app python -m yunex_demo.sec.ingest --rebuild
+
+pull-e4b: ## Pull the larger model for the Agent page; then set AGENT_MODEL=gemma4:e4b-it-qat
+	$(COMPOSE) exec -T ollama ollama pull gemma4:e4b-it-qat
 
 logs: ## Tail logs from every service
 	$(COMPOSE) logs -f --tail=100
