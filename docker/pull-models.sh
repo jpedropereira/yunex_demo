@@ -6,11 +6,13 @@ set -eu
 
 : "${OLLAMA_HOST:?OLLAMA_HOST must be set}"
 : "${MODEL_MAIN:?MODEL_MAIN must be set}"
+: "${AGENT_MODEL:?AGENT_MODEL must be set}"
 : "${MODEL_EMBED:?MODEL_EMBED must be set}"
 
 echo "Provisioning models via ${OLLAMA_HOST}"
 
-for model in "$MODEL_MAIN" "$MODEL_EMBED"; do
+# The agent model is usually the main model; pulling it again is that same no-op.
+for model in "$MODEL_MAIN" "$AGENT_MODEL" "$MODEL_EMBED"; do
     echo "--> pulling ${model}"
     ollama pull "$model"
 done

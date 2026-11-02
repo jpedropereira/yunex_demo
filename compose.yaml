@@ -6,6 +6,7 @@ name: yunex-demo
 
 x-model-env: &model-env
   MODEL_MAIN: ${MODEL_MAIN:-gemma4:e2b-it-qat}
+  AGENT_MODEL: ${AGENT_MODEL:-gemma4:e2b-it-qat}
   MODEL_EMBED: ${MODEL_EMBED:-embeddinggemma-2:270m}
 
 services:
@@ -78,7 +79,6 @@ services:
       SEC_USER_AGENT: ${SEC_USER_AGENT:-}
       SEC_COLLECTION: ${SEC_COLLECTION:-sec_filings}
       EMBED_BATCH_SIZE: ${EMBED_BATCH_SIZE:-16}
-      AGENT_MODEL: ${AGENT_MODEL:-gemma4:e2b-it-qat}
       AGENT_MAX_TURNS: ${AGENT_MAX_TURNS:-6}
       TRADE_MAX_PCT: ${TRADE_MAX_PCT:-5}
     volumes:

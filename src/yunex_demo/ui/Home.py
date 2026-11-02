@@ -7,7 +7,7 @@ from yunex_demo.config import settings
 st.set_page_config(page_title="Yunex Demo", page_icon=":material/network_node:", layout="wide")
 
 st.title("Reliable LLM pipelines, running locally")
-st.caption("Extract structured data, classify it, and act on it -- entirely on your own machine.")
+st.caption("Extract structured data, classify it, and act on it, with the models on your machine.")
 
 st.markdown(
     """
@@ -25,7 +25,9 @@ This demo builds up in five steps, each a page in the sidebar:
    call, and a human approves anything that changes the portfolio.
 
 The whole stack is local: **Ollama** for inference, **ChromaDB** for vectors,
-**EmbeddingGemma** for embeddings. Nothing leaves the machine.
+**EmbeddingGemma** for embeddings. Your documents stay on this machine. The network
+is only used to download the models, fetch filings from SEC EDGAR, and fetch prices
+from Yahoo Finance.
 """
 )
 
