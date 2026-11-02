@@ -4,6 +4,9 @@ Deliberately thin: the guards, tools and loop live in ``yunex_demo.agent``.
 
 Buttons use callbacks because a callback runs before the script does, so a click has
 already changed the portfolio by the time anything on the page is drawn.
+
+The answer streams, and each update is an st.* call, which is where a click would stop the
+script and lose the turn. So a turn runs last, with every control already drawn disabled.
 """
 
 import json
@@ -37,6 +40,11 @@ EVIDENCE_CHIPS = {
     citations.NO_CLOSE_PASSAGE: "⚠️ No close passage on this page",
     citations.NOT_RETRIEVED: "⛔ The agent never read this page",
 }
+# Fixed text from code, because the words below it haven't been checked yet.
+DRAFT_LABEL = (
+    "Draft, still being written. Citations are checked when it ends, and trades only happen "
+    "when you approve them."
+)
 RESULT_PREVIEW_CHARS = 400
 # Long text scrolls inside its own block, so one filing page can't push the rest off screen.
 LONG_TEXT_CHARS = 1500
@@ -153,6 +161,12 @@ snapshot = st.session_state.agent_snapshot
 messages = st.session_state.agent_messages
 chat = st.session_state.agent_chat
 calls = st.session_state.agent_calls
+# Set by queue_question, which runs before the script, so every control below can see it.
+busy = "agent_pending_question" in st.session_state
+
+
+def queue_question() -> None:
+    st.session_state.agent_pending_question = st.session_state.agent_question
 
 
 def refresh_prices() -> None:
@@ -176,8 +190,8 @@ def record_turn(
 ) -> None:
     """Save everything a finished turn changed, all at once.
 
-    Streamlit only stops a script for a click at an st.* call, and there is none in here. So
-    a click during a long turn can't leave the model remembering an answer the chat lost.
+    Streamlit only stops a script at an st.* call, and there is none in here. So nothing can
+    leave the model remembering an answer the chat lost.
     """
     evidence = citations.check_answer(result.answer, context.retrieved_pages)
     messages[:] = turn_messages
@@ -384,6 +398,16 @@ def show_chat_item(item: dict) -> None:
         show_steps(item.get("steps", []))
 
 
+def show_draft(slot, text: str) -> None:
+    """The answer so far, which replaces itself as it grows. The model's text is untrusted."""
+    if not text:
+        slot.empty()
+        return
+    with slot.container(), st.chat_message("assistant"):
+        st.caption(DRAFT_LABEL)
+        st.markdown(markdown_safe(text))
+
+
 def show_pending_trade(trade: dict, current_prices: dict, total_value) -> None:
     with st.container(border=True):
         st.markdown(f"#### ✋ Trade #{trade['id']} needs your approval")
@@ -399,7 +423,7 @@ def show_pending_trade(trade: dict, current_prices: dict, total_value) -> None:
                 icon=":material/check:",
                 on_click=approve,
                 args=(trade["id"],),
-                disabled=snapshot is None,
+                disabled=snapshot is None or busy,
             )
         with right:
             st.button(
@@ -408,6 +432,7 @@ def show_pending_trade(trade: dict, current_prices: dict, total_value) -> None:
                 icon=":material/close:",
                 on_click=reject,
                 args=(trade["id"],),
+                disabled=busy,
             )
 
 
@@ -603,8 +628,12 @@ def show_how_it_works() -> None:
         st.table(explain.ASKED_OR_ENFORCED_ROWS, hide_index=True)
 
 
-# --- 4. How full the context is. Filled in last, once this run's turn has happened -
-context_slot = st.container()
+# --- 4. How full the context is ------------------------------------------------
+usages = context_usage.usage_of_calls(calls, fixed_costs)
+if usages:
+    show_context_usage(usages[-1])
+else:
+    show_context_usage(context_usage.usage_before_any_call(messages, fixed_costs))
 
 # --- 5. The tabs: the conversation, what the model may ask for, what it received, and why
 chat_tab, tools_tab, context_tab, how_it_works_tab = st.tabs(
@@ -615,7 +644,12 @@ chat_tab, tools_tab, context_tab, how_it_works_tab = st.tabs(
 # the bottom, so the other tabs would open scrolled past their first lines.
 with chat_tab:
     conversation = st.container()
-    question = st.chat_input("Ask about the five companies, or propose a trade")
+    st.chat_input(
+        "Ask about the five companies, or propose a trade",
+        key="agent_question",
+        on_submit=queue_question,
+        disabled=busy,
+    )
 
 with conversation:
     if snapshot is None:
@@ -624,31 +658,14 @@ with conversation:
     for item in chat:
         show_chat_item(item)
 
-    if question:
-        show_chat_item({"role": "user", "text": question})
+    if "agent_turn_error" in st.session_state:
+        st.error(st.session_state.pop("agent_turn_error"))
 
-        # A copy until the turn succeeds, so a failed call leaves nothing to undo.
-        turn_messages = [*messages, {"role": "user", "content": question}]
-        context = AgentContext(conn, snapshot, st.session_state.agent_retrieved_pages)
+    if busy:
+        show_chat_item({"role": "user", "text": st.session_state.agent_pending_question})
+    # The turn runs at the end of the script, but its answer appears here.
+    live_answer = st.container()
 
-        try:
-            with st.spinner("Thinking..."):
-                result = loop.run_turn(
-                    turn_messages,
-                    context,
-                    turn_number=sum(item["role"] == "user" for item in chat) + 1,
-                    previous_messages=calls[-1].request["messages"] if calls else None,
-                    first_call_number=len(calls) + 1,
-                )
-                # Before the spinner closes, because closing it is where a click can stop us.
-                record_turn(question, turn_messages, result, context)
-        # The ollama client turns "server unreachable" into a builtin ConnectionError.
-        except (ConnectionError, httpx.HTTPError, ResponseError) as exc:
-            st.error(f"Model call failed: {exc}. Check the Stack Health page.")
-        else:
-            show_chat_item(chat[-1])
-
-    # Read after the turn above, so a trade the model just proposed shows straight away.
     positions = portfolio.read_positions(conn)
     prices = snapshot.latest_prices() if snapshot else {}
     total_value = portfolio.total_value(positions, prices)
@@ -676,9 +693,6 @@ with tools_tab:
     with st.expander("Exactly as the model receives them"):
         st.json(tools.TOOLS)
 
-# Worked out here, after the turn above, so it includes this run's calls.
-usages = context_usage.usage_of_calls(calls, fixed_costs)
-
 with context_tab:
     st.markdown(
         "One question can take several model calls, because each tool result goes back in a new "
@@ -693,6 +707,7 @@ with context_tab:
             range(len(calls)),
             index=len(calls) - 1,
             format_func=lambda position: call_label(calls[position]),
+            disabled=busy,
         )
         st.caption(context_summary(usages[chosen]))
         previous_prompt = calls[chosen - 1].rendered_prompt if chosen else ""
@@ -703,18 +718,13 @@ with context_tab:
             file_name="agent_call_log.json",
             mime="application/json",
             icon=":material/download:",
+            disabled=busy,
         )
 
 with how_it_works_tab:
     show_how_it_works()
 
-with context_slot:
-    if usages:
-        show_context_usage(usages[-1])
-    else:
-        show_context_usage(context_usage.usage_before_any_call(messages, fixed_costs))
-
-# --- 6. The sidebar, drawn last so it shows anything the turn above changed ------
+# --- 6. The sidebar -------------------------------------------------------------
 with st.sidebar:
     st.subheader(portfolio.PORTFOLIO_NAME)
 
@@ -747,11 +757,27 @@ with st.sidebar:
 
     st.text(f"Model: {settings.agent_model}")
 
-    st.button("Refresh prices", icon=":material/refresh:", on_click=refresh_prices, width="stretch")
     st.button(
-        "Reset portfolio", icon=":material/restart_alt:", on_click=reset_portfolio, width="stretch"
+        "Refresh prices",
+        icon=":material/refresh:",
+        on_click=refresh_prices,
+        width="stretch",
+        disabled=busy,
     )
-    st.button("New conversation", icon=":material/add:", on_click=new_conversation, width="stretch")
+    st.button(
+        "Reset portfolio",
+        icon=":material/restart_alt:",
+        on_click=reset_portfolio,
+        width="stretch",
+        disabled=busy,
+    )
+    st.button(
+        "New conversation",
+        icon=":material/add:",
+        on_click=new_conversation,
+        width="stretch",
+        disabled=busy,
+    )
 
     st.subheader("Indexed filings")
     try:
@@ -794,3 +820,36 @@ with st.sidebar:
         )
     else:
         st.text("None yet.")
+
+# --- 7. The turn, last, so every control above is already drawn disabled ---------
+if busy:
+    # Taken before the turn starts, so a turn that dies can't start again on the next run.
+    question = st.session_state.pop("agent_pending_question")
+    # A copy until the turn succeeds, so a failed call leaves nothing to undo.
+    turn_messages = [*messages, {"role": "user", "content": question}]
+    context = AgentContext(conn, snapshot, st.session_state.agent_retrieved_pages)
+
+    with live_answer:
+        draft = st.empty()
+        try:
+            with st.spinner("Thinking..."):
+                result = loop.run_turn(
+                    turn_messages,
+                    context,
+                    turn_number=sum(item["role"] == "user" for item in chat) + 1,
+                    previous_messages=calls[-1].request["messages"] if calls else None,
+                    first_call_number=len(calls) + 1,
+                    on_text=lambda text: show_draft(draft, text),
+                )
+                # Before the spinner closes, because closing it is where the script can stop.
+                record_turn(question, turn_messages, result, context)
+        # The ollama client turns "server unreachable" into a builtin ConnectionError.
+        except (ConnectionError, httpx.HTTPError, ResponseError) as exc:
+            # Kept for the next run, because the rerun below clears the page.
+            st.session_state.agent_turn_error = (
+                f"Model call failed: {exc}. Check the Stack Health page."
+            )
+
+    # Redraws everything from what was recorded, with the controls enabled again. So the
+    # answer on screen is the recorded one, and the draft and its label are gone.
+    st.rerun()

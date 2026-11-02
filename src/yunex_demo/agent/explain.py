@@ -104,12 +104,38 @@ FIT_CONTEXT = Section(
 
 CHECK_ANSWER = Section(
     "Checking the answer: find the passage, and let a person read it",
-    "A model can cite a page it never read, or a real page that says something else. So code "
-    "compares each citation with the page, finds the closest passage, and shows the two side by "
-    f"side. It flags a score below {citations.MATCH_THRESHOLD}, a page the agent wasn't given, a "
-    "number that isn't on the page, and quoted text that isn't word for word. It never says "
-    '"verified": matching words can\'t judge meaning, so "none" in place of "all" still matches. '
-    "These checks flag the answer and don't change it. A person decides.",
+    "A model can cite a page it never read, or a real page that says something else. So once the "
+    "answer is finished, plain code compares each citation with the page. No model is involved, "
+    "and a draft still being written hasn't been checked yet:\n\n"
+    "1. **Keep what was read.** Every page a search returns is stored whole, apart from the "
+    "history, so a source can still be checked after its turn has left the context.\n"
+    "2. **Find the claims.** Each citation in the answer is matched with the last sentence before "
+    "it, and that sentence is the claim.\n"
+    "3. **Was that page read?** If no search returned it, the citation is flagged straight away, "
+    "because the page number may be invented.\n"
+    '4. **Find the closest passage.** Common words such as "the" are dropped, and the claim is '
+    f"compared with every run of up to {citations.MOST_SENTENCES_IN_A_PASSAGE} sentences on the "
+    f"page. A claim word missing from a passage counts {citations.CLAIM_WORDS_WEIGHT} times as "
+    "much as an extra word in it, because filing sentences run long. A best score below "
+    f"{citations.MATCH_THRESHOLD} is flagged.\n"
+    "5. **Check numbers and quotes exactly.** Every number in the claim must be on the page, and "
+    "text in quotation marks must be there word for word. Either can flag a claim that scored "
+    "well.\n"
+    "6. **Suggest a better page.** If the cited page fails, the other pages read for that company "
+    "are scored too, and the closest one that passes is named.\n\n"
+    "**What you see.** Check the sources puts each claim next to the passage, opens by itself if "
+    "anything is flagged, and lists those first. An answer that cites nothing gets a warning "
+    "listing the pages the agent read. These checks flag the answer and don't change it. A person "
+    "decides.\n\n"
+    # The figures are the measurements recorded on MATCH_THRESHOLD in citations.py.
+    '**The limits.** It never says "verified": matching words can\'t judge meaning, so "none" in '
+    f'place of "all" still matches. The threshold was set on 55 citations from real answers, '
+    "but those claims also reached it on 5 of 330 random pages, so a wrong page can pass. When an "
+    "answer has any citation, sentences without one aren't checked, and neither are earlier "
+    "sentences that a citation was meant to cover. The model only received the kept sentences, so "
+    "a claim can match words on the page that it never saw. A page read earlier in the "
+    "conversation still counts as read. A company name the code doesn't recognise is flagged as "
+    "never read, even if it was.",
     "agent/citations.py",
 )
 

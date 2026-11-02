@@ -8,11 +8,12 @@ the page can show the audience what the model really received.
 import copy
 import json
 import time
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import date
 
 import httpx
-from ollama import ChatResponse, Client
+from ollama import ChatResponse, Client, Message
 
 from yunex_demo.agent import hooks, portfolio, tools
 from yunex_demo.agent.approval import APPROVAL_NOTE_PREFIX
@@ -89,8 +90,41 @@ class TurnResult:
     turns_dropped: int = 0
 
 
-def call_model(request: dict) -> ChatResponse:
-    return Client(host=settings.ollama_host, timeout=300).chat(**request)
+def _collect_reply(
+    chunks: Iterable[ChatResponse], on_text: Callable[[str], None] | None
+) -> ChatResponse:
+    """Join a streamed reply into one response, passing on the text so far as it grows.
+
+    Thinking isn't passed on, only logged. The last chunk carries the token counts and why the
+    reply ended, so everything after this call sees the same shape as a reply that wasn't streamed.
+    """
+    content = ""
+    thinking = ""
+    tool_calls = []
+    last_chunk = None
+    for chunk in chunks:
+        last_chunk = chunk
+        thinking += chunk.message.thinking or ""
+        tool_calls += chunk.message.tool_calls or []
+        if chunk.message.content:
+            content += chunk.message.content
+            if on_text:
+                on_text(content)
+
+    if last_chunk is None:
+        raise ConnectionError("Ollama closed the stream without replying")
+    message = Message(
+        role="assistant",
+        content=content,
+        thinking=thinking or None,
+        tool_calls=tool_calls or None,
+    )
+    return last_chunk.model_copy(update={"message": message})
+
+
+def call_model(request: dict, on_text: Callable[[str], None] | None = None) -> ChatResponse:
+    stream = Client(host=settings.ollama_host, timeout=300).chat(**request, stream=True)
+    return _collect_reply(stream, on_text)
 
 
 def render_prompt(request: dict) -> str:
@@ -256,11 +290,14 @@ def run_turn(
     turn_number: int = 1,
     previous_messages: list[dict] | None = None,
     first_call_number: int = 1,
+    on_text: Callable[[str], None] | None = None,
 ) -> TurnResult:
     """Run the loop until the model answers or a trade needs a human.
 
     ``messages`` grows in place: it is the memory.
     ``previous_messages`` is what the last call sent, so this one can tell what is new.
+    ``on_text`` receives each reply's text so far, and "" once that text turns out not to be
+    the answer. It is a draft for the screen: nothing here depends on it.
     """
     result = TurnResult(answer="")
     previous = previous_messages or []
@@ -287,7 +324,7 @@ def run_turn(
         # A deep copy at call time, because messages keeps changing after this.
         sent = copy.deepcopy(request)
         rendered_prompt = render_prompt(sent)
-        response = call_model(request)
+        response = call_model(request, on_text)
 
         first_new = _first_new_message(previous, sent["messages"])
         result.calls.append(
@@ -316,6 +353,11 @@ def run_turn(
             result.answer = reply.content or "The model returned no answer."
             assistant["content"] = result.answer
             return result
+
+        # Text can come before a tool call. Measured with a poisoned search result, it said
+        # "Done, the trade has been executed" just before proposing the trade.
+        if on_text:
+            on_text("")
 
         reply_steps = []
         for tool_call in tool_calls:
