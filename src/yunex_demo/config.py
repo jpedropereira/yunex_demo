@@ -72,10 +72,11 @@ class Settings(BaseSettings):
     # value as a Go duration, and "-1" has no unit, so it 400s.
     ollama_keep_alive: int = -1
 
-    # Generation is deterministic: the talk is about reliability, and a demo that
-    # answers differently on each run undercuts the point.
+    # These reduce variation but don't remove it: the same agent question gave four
+    # different answers in four runs (measured). So reliability has to come from the
+    # guards and validation in code, not from the model repeating itself.
     temperature: float = 0.0
-    seed: int = Field(default=7, description="Fixed seed for reproducible output")
+    seed: int = Field(default=7, description="Fixed seed, to reduce variation between runs")
 
     @property
     def chroma_url(self) -> str:

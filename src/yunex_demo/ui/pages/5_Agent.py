@@ -114,6 +114,11 @@ st.markdown(
 
 st.title("Agent")
 st.subheader("The model chooses the tools; code runs them, guards them, and asks a human.")
+st.caption(
+    "Temperature 0 and a fixed seed reduce variation, but the same question can still get a "
+    "different answer. So the checks live in code: hooks guard every tool call, citations are "
+    "compared with the page, and a human approves every trade."
+)
 
 # --- 2. What survives between reruns ------------------------------------------
 # The model remembers nothing, so the page keeps the history and resends it all each turn.

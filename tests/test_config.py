@@ -33,7 +33,7 @@ def test_defaults_target_a_16gb_laptop(clean_env):
     assert s.ollama_num_ctx == 8192
 
 
-def test_generation_is_deterministic_by_default(clean_env):
+def test_generation_uses_temperature_zero_and_a_fixed_seed_by_default(clean_env):
     s = _settings()
     assert s.temperature == 0.0
     assert s.seed == 7
