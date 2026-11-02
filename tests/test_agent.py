@@ -1730,6 +1730,8 @@ def test_flowchart_is_fixed_text_with_every_edge_between_declared_nodes():
 
 def test_explanations_quote_the_limits_the_code_really_uses():
     assert str(settings.agent_max_turns) in explain.LOOP.text
+    assert f"counts {citations.CLAIM_WORDS_WEIGHT} times" in explain.CHECK_ANSWER.text
+    assert f"up to {citations.MOST_SENTENCES_IN_A_PASSAGE} sentences" in explain.CHECK_ANSWER.text
     assert f"{loop.context_budget():,}" in explain.FIT_CONTEXT.text
     assert f"{tools.SEARCH_RESULTS} other pages" in explain.SHORT_RESULTS.text
     assert str(citations.MATCH_THRESHOLD) in explain.CHECK_ANSWER.text
