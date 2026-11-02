@@ -40,3 +40,9 @@ def get_collection() -> chromadb.Collection:
         embedding_function=None,
         configuration={"hnsw": {"space": "cosine"}},
     )
+
+
+def delete_collection() -> None:
+    """Delete every indexed filing, for ``make reindex``. Embedding them again takes minutes."""
+    client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
+    client.delete_collection(settings.sec_collection)

@@ -78,9 +78,15 @@ services:
       SEC_USER_AGENT: ${SEC_USER_AGENT:-}
       SEC_COLLECTION: ${SEC_COLLECTION:-sec_filings}
       EMBED_BATCH_SIZE: ${EMBED_BATCH_SIZE:-16}
+      AGENT_MODEL: ${AGENT_MODEL:-gemma4:e2b-it-qat}
+      AGENT_MAX_TURNS: ${AGENT_MAX_TURNS:-6}
+      TRADE_MAX_PCT: ${TRADE_MAX_PCT:-5}
     volumes:
       # Live reload during the demo: edit a page, refresh the browser.
       - ./src:/app/src
+      # A named volume, so the price cache survives a rebuild without leaving
+      # root-owned files in the repo. `make clean` deletes it.
+      - agent_data:/app/data
     ports:
       - "${APP_PUBLISHED_PORT:-8501}:8501"
     healthcheck:
@@ -103,3 +109,4 @@ services:
 volumes:
   ollama_models:
   chroma_data:
+  agent_data:

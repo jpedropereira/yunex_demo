@@ -12,6 +12,7 @@ import uuid
 import chromadb
 import pytest
 
+from yunex_demo.agent import loop, quotes
 from yunex_demo.sec import ingest, store
 from yunex_demo.workflow import pipeline
 from yunex_demo.workflow.schemas import Classification
@@ -76,6 +77,23 @@ def fake_call_model(prompt: str, schema: type) -> str:
     return json.dumps(answer)
 
 
+@pytest.fixture(autouse=True)
+def no_prompt_rendering(monkeypatch):
+    """The agent asks Ollama for each call's final prompt, which no test may really do."""
+    monkeypatch.setattr(loop, "render_prompt", lambda request: "")
+
+
+def quote_the_whole_page(prompt: str) -> str:
+    """The relevance step at its most generous, so a test can script just the agent."""
+    page = prompt.split("<document>\n")[1].split("\n</document>")[0]
+    return json.dumps({"quotes": [page]})
+
+
+@pytest.fixture(autouse=True)
+def no_relevance_model(monkeypatch):
+    monkeypatch.setattr(quotes, "ask_model", quote_the_whole_page)
+
+
 @pytest.fixture
 def fake_model(monkeypatch):
     monkeypatch.setattr(pipeline, "call_model", fake_call_model)
@@ -114,8 +132,17 @@ def filing_html(company: str, pages: list[str]) -> str:
     </body></html>"""
 
 
-def filing_url(accession: str) -> str:
-    return f"https://www.sec.gov/Archives/edgar/data/1234/{accession}/filing.htm"
+NVIDIA_CIK = 1045810
+APPLE_CIK = 320193
+
+
+def filing_url(accession: str, cik: int = NVIDIA_CIK) -> str:
+    return f"https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/filing.htm"
+
+
+def fake_latest_10k_url(cik: int) -> str:
+    """What the SEC would answer: a different filing for each company."""
+    return filing_url(f"{cik:018d}", cik)
 
 
 @pytest.fixture
@@ -137,7 +164,7 @@ def two_filings(monkeypatch, sec_collection):
     pages = [f"Page {number} export controls sales China {filler}" for number in range(1, 13)]
     html_by_url = {
         filing_url(ALPHA_ACCESSION): filing_html("ALPHA CORP", pages),
-        filing_url(BETA_ACCESSION): filing_html("BETA CORP", pages),
+        filing_url(BETA_ACCESSION, APPLE_CIK): filing_html("BETA CORP", pages),
     }
     monkeypatch.setattr(ingest, "fetch_filing", html_by_url.__getitem__)
     for url in html_by_url:

@@ -51,7 +51,7 @@ def _normalise(text: str) -> str:
     return " ".join(text.lower().split())
 
 
-def _numbers_in(text: str) -> set[Decimal]:
+def numbers_in(text: str) -> set[Decimal]:
     """Every number written in the text: "2,000,000.00" -> Decimal("2000000.00").
 
     Decimals compare by value, so the model's 42.5 matches the document's 42.50.
@@ -80,7 +80,7 @@ def _grounding_check(
     marker also makes a 1 appear in every document.
     """
     text = _normalise(document_text)
-    written_numbers = _numbers_in(document_text)
+    written_numbers = numbers_in(document_text)
     missing = []
 
     for field, number in numbers.items():

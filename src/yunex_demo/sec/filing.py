@@ -3,10 +3,14 @@
 Three things here protect the demo from bad input or silent data loss: only EDGAR
 document URLs are accepted, metadata comes from the filing's own XBRL tags, and no
 chunk is too long for the embedding model to read in full.
+
+Each chunk also keeps the page number printed in the filing, so that a citation can be
+looked up in the filing itself.
 """
 
 import logging
 import re
+from collections import Counter
 from dataclasses import dataclass
 
 from bs4 import BeautifulSoup
@@ -22,7 +26,6 @@ EDGAR_URL = re.compile(
 
 METADATA_TAGS = {
     "company": "dei:EntityRegistrantName",
-    "ticker": "dei:TradingSymbol",
     "form": "dei:DocumentType",
     "period_end": "dei:DocumentPeriodEndDate",
     "fiscal_year": "dei:DocumentFiscalYearFocus",
@@ -38,6 +41,9 @@ TABLE_START = "\x00TABLE-START\x00"
 TABLE_END = "\x00TABLE-END\x00"
 ROW_END = "\x00ROW-END\x00"
 TABLE_PATTERN = re.compile(f"{TABLE_START}(.*?){TABLE_END}", re.DOTALL)
+
+# The number at the foot of a page: "... stock price. 11", "... under 10.", "Form 10-K | 7".
+PRINTED_NUMBER_AT_END = re.compile(r"(\d{1,3})\.?$")
 
 MIN_WORDS_PER_PAGE = 30
 FALLBACK_WORDS_PER_PAGE = 500
@@ -55,11 +61,16 @@ MAX_TOKENS_PER_CHUNK = 1100
 
 @dataclass(frozen=True)
 class Chunk:
-    """One embeddable piece of a filing. ``part`` is above 1 only on a split page."""
+    """One embeddable piece of a filing. ``part`` is above 1 only on a split page.
+
+    ``page`` counts page breaks from the start of the document. ``printed_page`` is what
+    the filing itself calls that page, and is 0 for anything before its printed page 1.
+    """
 
     page: int
     part: int
     text: str
+    printed_page: int
 
 
 def parse_edgar_url(url: str) -> tuple[str, str]:
@@ -105,6 +116,24 @@ def estimate_tokens(text: str) -> int:
     return len(TOKEN_PATTERN.findall(text))
 
 
+def _unnumbered_pages_before_page_one(pages: list[str]) -> int:
+    """How far page positions run ahead of the printed numbers, or 0 if the pages aren't numbered.
+
+    Measured on the five 10-Ks: Apple is 2 ahead, Alphabet 1, and the others match. Taken
+    from the gap most pages share, because a page can also end in a number that isn't its
+    own, as one of Apple's does. A gap that most pages don't share isn't a real gap.
+    """
+    gaps = Counter()
+    for position, page in enumerate(pages, start=1):
+        printed_number = PRINTED_NUMBER_AT_END.search(_plain_text(page))
+        if printed_number:
+            gaps[position - int(printed_number[1])] += 1
+    if not gaps:
+        return 0
+    gap, pages_with_gap = gaps.most_common(1)[0]
+    return gap if gap >= 0 and pages_with_gap * 2 > len(pages) else 0
+
+
 def split_pages(soup: BeautifulSoup) -> tuple[list[Chunk], int]:
     """Split a filing into chunks, one per page unless a page is too long to embed.
 
@@ -139,12 +168,16 @@ def split_pages(soup: BeautifulSoup) -> tuple[list[Chunk], int]:
         pages = _word_windows(_plain_text(text))
 
     chunks = []
+    pages_before_page_one = _unnumbered_pages_before_page_one(pages)
     # Number by position in the document, so a skipped page still takes up a number.
     for page_number, page_text in enumerate(pages, start=1):
         if len(_plain_text(page_text).split()) < MIN_WORDS_PER_PAGE:
             continue
+        printed_page = max(page_number - pages_before_page_one, 0)
         for part, part_text in enumerate(_split_long_page(page_text), start=1):
-            chunks.append(Chunk(page=page_number, part=part, text=part_text))
+            chunks.append(
+                Chunk(page=page_number, part=part, text=part_text, printed_page=printed_page)
+            )
     return chunks, len(pages)
 
 
