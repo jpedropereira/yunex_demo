@@ -438,7 +438,7 @@ def _reply(text: str = "", tool_calls: list | None = None) -> ChatResponse:
 
 def _script_model(monkeypatch, replies: list[ChatResponse]) -> None:
     remaining = iter(replies)
-    monkeypatch.setattr(loop, "call_model", lambda request: next(remaining))
+    monkeypatch.setattr(loop, "call_model", lambda request, on_text=None: next(remaining))
 
 
 def _positions(app: AppTest) -> dict[str, int]:
@@ -549,7 +549,7 @@ def test_agent_page_flags_a_citation_that_was_never_retrieved(monkeypatch):
 
 
 def test_agent_page_a_failed_model_call_leaves_no_half_finished_question(monkeypatch):
-    def model_is_down(request):
+    def model_is_down(request, on_text=None):
         raise ConnectionError("Ollama went away")
 
     monkeypatch.setattr(loop, "call_model", model_is_down)
@@ -975,7 +975,7 @@ def test_agent_page_keeps_the_answer_when_a_click_interrupts_the_script(monkeypa
 
 
 def test_agent_page_failed_model_call_leaves_no_trace_of_the_question(monkeypatch):
-    def model_is_down(request):
+    def model_is_down(request, on_text=None):
         raise ConnectionError("Ollama is down")
 
     monkeypatch.setattr(loop, "call_model", model_is_down)
@@ -985,6 +985,111 @@ def test_agent_page_failed_model_call_leaves_no_trace_of_the_question(monkeypatc
     assert "Model call failed" in app.error[0].value
     assert app.session_state.agent_chat == []
     assert [message["role"] for message in app.session_state.agent_messages] == ["system"]
+
+
+def _model_streams_then_stops_the_script(monkeypatch, text: str) -> None:
+    """Stop inside the model call, so the page stays as it looks during a turn."""
+
+    def fake_call_model(request, on_text=None):
+        on_text(text)
+        raise StopException()
+
+    monkeypatch.setattr(loop, "call_model", fake_call_model)
+
+
+def _has_draft_label(app: AppTest) -> bool:
+    return any("Draft, still being written" in item.value for item in app.caption)
+
+
+def test_agent_page_disables_every_control_during_a_turn(monkeypatch):
+    # A trade first, so its Approve and Reject buttons and the Context tab's controls exist.
+    _script_model(
+        monkeypatch,
+        [_reply(tool_calls=[("propose_trade", {"ticker": "NVDA", "side": "buy", "quantity": 10})])],
+    )
+    app = _run(AGENT_PAGE)
+    app.chat_input[0].set_value("Buy 10 NVDA shares.").run()
+    assert not any(button.disabled for button in app.button)
+    assert not app.chat_input[0].disabled
+
+    _model_streams_then_stops_the_script(monkeypatch, "Partial answer")
+    app.chat_input[0].set_value("A question?").run()
+
+    assert not app.exception, f"page raised: {[e.value for e in app.exception]}"
+    assert app.chat_input[0].disabled
+    assert app.selectbox[0].disabled
+    assert app.button(key="approve_1").disabled
+    assert app.button(key="reject_1").disabled
+    assert all(button.disabled for button in app.button)
+
+
+def test_agent_page_labels_the_streaming_answer_a_draft_and_keeps_it_safe(monkeypatch):
+    _model_streams_then_stops_the_script(monkeypatch, "Costs $5 ![x](http://attacker.test)")
+    app = _run(AGENT_PAGE)
+    app.chat_input[0].set_value("A question?").run()
+
+    assert not app.exception, f"page raised: {[e.value for e in app.exception]}"
+    assert _has_draft_label(app)
+    assert any(item.value == r"Costs \$5 !\[x](http://attacker.test)" for item in app.markdown)
+
+
+def test_agent_page_replaces_the_draft_with_the_recorded_answer_and_its_checks(monkeypatch):
+    def fake_call_model(request, on_text=None):
+        on_text("Made in Cupertino")
+        on_text("Made in Cupertino (Apple 10-K, p. 99).")
+        return _reply("Made in Cupertino (Apple 10-K, p. 99).")
+
+    monkeypatch.setattr(loop, "call_model", fake_call_model)
+    app = _run(AGENT_PAGE)
+    app.chat_input[0].set_value("Where does Apple make its products?").run()
+
+    assert not app.exception, f"page raised: {[e.value for e in app.exception]}"
+    assert not _has_draft_label(app)
+    answers = [item.value for item in app.markdown if "Made in Cupertino" in item.value]
+    assert answers == ["Made in Cupertino (Apple 10-K, p. 99)."], "drawn once, and in full"
+    assert any("never read this page" in block.value for block in app.markdown)
+    assert not any(button.disabled for button in app.button)
+    assert not app.chat_input[0].disabled
+
+
+def test_agent_page_shows_only_the_code_message_after_a_false_claim_before_a_trade(monkeypatch):
+    false_claim = "Done, the trade has been executed."
+
+    def fake_call_model(request, on_text=None):
+        on_text(false_claim)
+        return _reply(
+            false_claim,
+            tool_calls=[("propose_trade", {"ticker": "NVDA", "side": "buy", "quantity": 10})],
+        )
+
+    monkeypatch.setattr(loop, "call_model", fake_call_model)
+    app = _run(AGENT_PAGE)
+    app.chat_input[0].set_value("Buy 10 NVDA shares.").run()
+
+    assert not app.exception, f"page raised: {[e.value for e in app.exception]}"
+    assert not _has_draft_label(app)
+    assert any("Trade #1 is waiting for your approval." in item.value for item in app.markdown)
+    assert not any(false_claim in item.value for item in app.chat_message[-1].markdown)
+
+
+def test_agent_page_shows_a_failed_call_once_and_enables_the_controls_again(monkeypatch):
+    def model_fails_mid_answer(request, on_text=None):
+        on_text("Half an answ")
+        raise ConnectionError("Ollama went away")
+
+    monkeypatch.setattr(loop, "call_model", model_fails_mid_answer)
+    app = _run(AGENT_PAGE)
+    app.chat_input[0].set_value("A question?").run()
+
+    assert not app.exception, f"page raised: {[e.value for e in app.exception]}"
+    assert "Model call failed" in app.error[0].value
+    assert not _has_draft_label(app)
+    assert not any("Half an answ" in item.value for item in app.markdown)
+    assert not app.chat_input[0].disabled
+
+    app.run()
+
+    assert not app.error, "the error belongs to the failed turn, not to every later run"
 
 
 def test_agent_page_card_shows_the_refreshed_price_approve_would_use(monkeypatch):

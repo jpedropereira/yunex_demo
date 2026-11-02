@@ -88,7 +88,7 @@ def _script_model(monkeypatch, replies: list[ChatResponse]) -> list[dict]:
     received = []
     remaining = iter(replies)
 
-    def fake_call_model(request):
+    def fake_call_model(request, on_text=None):
         received.append(json.loads(json.dumps(request)))
         return next(remaining)
 
@@ -873,6 +873,69 @@ def test_the_approval_note_is_not_read_as_a_question_about_that_company(monkeypa
     ]
     result = loop.run_turn(messages, context)
     assert result.steps[0].warnings == []
+
+
+# --- Streaming ----------------------------------------------------------------
+
+
+def _chunk(**fields) -> ChatResponse:
+    return ChatResponse(message=Message(role="assistant", **fields))
+
+
+def test_a_streamed_reply_is_joined_into_one_response():
+    tool_call = Message.ToolCall(
+        function=Message.ToolCall.Function(name="get_portfolio", arguments={})
+    )
+    last_chunk = ChatResponse(
+        message=Message(role="assistant", content=""),
+        done_reason="stop",
+        prompt_eval_count=650,
+        eval_count=40,
+    )
+    chunks = [
+        _chunk(thinking="Let me "),
+        _chunk(thinking="see."),
+        _chunk(content="Hel"),
+        _chunk(content="lo", tool_calls=[tool_call]),
+        last_chunk,
+    ]
+    seen = []
+
+    response = loop._collect_reply(chunks, seen.append)
+
+    assert seen == ["Hel", "Hello"], "the callback gets the text so far, and never the thinking"
+    assert response.message.content == "Hello"
+    assert response.message.thinking == "Let me see."
+    assert response.message.tool_calls == [tool_call]
+    assert response.done_reason == "stop"
+    assert response.prompt_eval_count == 650
+    assert response.eval_count == 40
+
+
+def test_a_stream_that_ends_with_no_reply_is_a_connection_error():
+    with pytest.raises(ConnectionError):
+        loop._collect_reply([], None)
+
+
+def test_text_before_a_trade_is_wiped_and_never_becomes_the_answer(monkeypatch, context):
+    false_claim = "Done, the trade has been executed."
+
+    def model_says_it_then_proposes(request, on_text=None):
+        on_text(false_claim)
+        return _reply(
+            false_claim,
+            tool_calls=[("propose_trade", {"ticker": "NVDA", "side": "buy", "quantity": 10})],
+        )
+
+    monkeypatch.setattr(loop, "call_model", model_says_it_then_proposes)
+    messages = loop.new_conversation()
+    messages.append({"role": "user", "content": "Buy 10 NVDA shares."})
+    seen = []
+
+    result = loop.run_turn(messages, context, on_text=seen.append)
+
+    assert seen == [false_claim, ""]
+    assert result.answer == "Trade #1 is waiting for your approval."
 
 
 # --- The call log -------------------------------------------------------------
