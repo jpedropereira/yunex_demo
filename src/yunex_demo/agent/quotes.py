@@ -37,6 +37,7 @@ class PageReview:
     prompt: str = ""
     reply: str = ""
     seconds: float = 0.0
+    repeated: list[str] = field(default_factory=list)
 
 
 def review_prompt(question: str, page_text: str) -> str:
@@ -79,13 +80,17 @@ def _is_on_page(quote: str, page_text: str) -> bool:
     return bool(quote) and quote in _plain_spacing(page_text)
 
 
-def _outcome(kept: list[str], discarded: list[str]) -> str:
-    if not kept:
-        outcome = "nothing relevant"
-    else:
+def _outcome(kept: list[str], discarded: list[str], repeated: list[str]) -> str:
+    if kept:
         outcome = f"kept {len(kept)} sentence{'s' if len(kept) > 1 else ''}"
+    elif repeated:
+        outcome = "nothing new"
+    else:
+        outcome = "nothing relevant"
     if discarded:
         outcome += f", discarded {len(discarded)} not word for word on the page"
+    if repeated:
+        outcome += f", skipped {len(repeated)} already kept from an earlier page"
     return outcome
 
 
@@ -103,5 +108,24 @@ def review_page(question: str, page_text: str, cite: str, similarity: float) -> 
     kept = [quote for quote in proposed if _is_on_page(quote, page_text)]
     discarded = [quote for quote in proposed if quote not in kept]
     return PageReview(
-        cite, similarity, _outcome(kept, discarded), kept, discarded, prompt, reply, seconds
+        cite, similarity, _outcome(kept, discarded, []), kept, discarded, prompt, reply, seconds
     )
+
+
+def set_aside_repeats(review: PageReview, already_kept: list[str]) -> None:
+    """Move sentences this search already has out of ``kept``, because filings repeat themselves.
+
+    NVIDIA's 10-K has the same three sentences on pages 10 and 27, a fifth of one search's
+    result (measured). A contained sentence counts too, since a page split can cut a copy short.
+    """
+    new_quotes = []
+    for quote in review.kept:
+        plain_quote = _plain_spacing(quote)
+        if any(plain_quote in _plain_spacing(kept) for kept in [*already_kept, *new_quotes]):
+            review.repeated.append(quote)
+        else:
+            new_quotes.append(quote)
+    # Only when something moved, so an "unusable reply" outcome isn't overwritten.
+    if review.repeated:
+        review.kept = new_quotes
+        review.outcome = _outcome(review.kept, review.discarded, review.repeated)

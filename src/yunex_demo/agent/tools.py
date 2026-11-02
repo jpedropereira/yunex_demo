@@ -169,6 +169,7 @@ def search_filing(arguments: dict, context: AgentContext) -> dict:
 
     company = company_name(ticker)
     results = []
+    quotes_kept = []
     pages_reviewed = 0
     for hit in hits:
         if pages_reviewed == SEARCH_RESULTS:
@@ -184,10 +185,12 @@ def search_filing(arguments: dict, context: AgentContext) -> dict:
         pages_reviewed += 1
         cite = f"{company} 10-K, p. {hit.printed_page}"
         review = quotes.review_page(question, hit.text, cite, hit.similarity)
+        quotes.set_aside_repeats(review, quotes_kept)
         context.page_reviews.append(review)
         if review.kept:
             _remember_page(hit, cite, context)
             results.append({"cite": cite, "quotes": review.kept})
+            quotes_kept.extend(review.kept)
 
     if not results:
         return {

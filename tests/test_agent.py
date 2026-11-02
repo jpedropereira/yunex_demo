@@ -410,6 +410,62 @@ def _model_quotes(monkeypatch, *sentences: str) -> None:
     monkeypatch.setattr(quotes, "ask_model", lambda prompt: reply)
 
 
+def _page_quotes_by_prompt(monkeypatch, quotes_by_page_word: dict[str, list[str]]) -> None:
+    def ask_model(prompt: str) -> str:
+        word = next(word for word in quotes_by_page_word if word in prompt)
+        return json.dumps({"quotes": quotes_by_page_word[word]})
+
+    monkeypatch.setattr(quotes, "ask_model", ask_model)
+
+
+def test_a_sentence_on_two_pages_reaches_the_model_once(monkeypatch, context):
+    repeated = "Export rules are complex."
+    _search_finds(
+        monkeypatch,
+        [_hit(10, f"first {repeated} Only here."), _hit(27, f"second {repeated} Also new.")],
+    )
+    _page_quotes_by_prompt(
+        monkeypatch,
+        {"first": [repeated, "Only here."], "second": [repeated, "Also new."]},
+    )
+
+    result = _search_apple(context)
+
+    assert result == {
+        "results": [
+            {"cite": "Apple 10-K, p. 10", "quotes": [repeated, "Only here."]},
+            {"cite": "Apple 10-K, p. 27", "quotes": ["Also new."]},
+        ]
+    }
+    later_page = context.page_reviews[1]
+    assert later_page.repeated == [repeated]
+    assert later_page.outcome == "kept 1 sentence, skipped 1 already kept from an earlier page"
+
+
+def test_a_copy_cut_short_by_a_page_split_counts_as_a_repeat(monkeypatch, context):
+    whole = "We may lose sales if the USG does not grant licenses."
+    cut_short = "We may lose sales if the USG does not"
+    _search_finds(monkeypatch, [_hit(10, f"first {whole}"), _hit(27, f"second {cut_short}")])
+    _page_quotes_by_prompt(monkeypatch, {"first": [whole], "second": [cut_short]})
+
+    result = _search_apple(context)
+
+    assert result == {"results": [{"cite": "Apple 10-K, p. 10", "quotes": [whole]}]}
+
+
+def test_a_page_with_nothing_new_cant_be_cited(monkeypatch, context):
+    repeated = "Export rules are complex."
+    _search_finds(monkeypatch, [_hit(10, f"first {repeated}"), _hit(27, f"second {repeated}")])
+    _page_quotes_by_prompt(monkeypatch, {"first": [repeated], "second": [repeated]})
+
+    _search_apple(context)
+
+    assert list(context.retrieved_pages) == [("AAPL", 10)]
+    assert context.page_reviews[1].outcome == (
+        "nothing new, skipped 1 already kept from an earlier page"
+    )
+
+
 def test_a_search_gives_the_model_only_sentences_really_on_the_page(monkeypatch, context):
     page = "Partners make the phones.\nThey   are in Vietnam. Other text the model never sees."
     _search_finds(monkeypatch, [_hit(9, page)])
@@ -466,7 +522,12 @@ def test_the_cover_and_contents_are_skipped_and_the_next_page_takes_their_place(
 ):
     _search_finds(
         monkeypatch,
-        [_hit(1), _hit(2, printed_page=0), *[_hit(page) for page in range(5, 15)]],
+        [
+            _hit(1),
+            _hit(2, printed_page=0),
+            # Different text on each page, because a repeated sentence is only kept once.
+            *[_hit(page, f"A sentence on page {page}.") for page in range(5, 15)],
+        ],
     )
     result = _search_apple(context)
 

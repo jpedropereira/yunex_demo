@@ -473,7 +473,11 @@ def show_page_review(review: quotes.PageReview) -> None:
     with st.container(border=True):
         st.text(f"{review.cite} · similarity {review.similarity} · {review.seconds:.1f}s")
         st.text(review.outcome)
-        for heading, sentences in (("Kept", review.kept), ("Discarded", review.discarded)):
+        for heading, sentences in (
+            ("Kept", review.kept),
+            ("Discarded", review.discarded),
+            ("Already kept from an earlier page", review.repeated),
+        ):
             if sentences:
                 st.markdown(f"##### {heading}")
                 show_long_text("\n\n".join(sentences))
