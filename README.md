@@ -1,124 +1,103 @@
-# Yunex Demo — reliable LLM pipelines, running locally
+<p align="center">
+  <img src="assets/yunex-logo.png" alt="YUNEX Youth Innovation Exchange Program logo" width="320">
+</p>
 
-Support material for a hackathon talk on **reliably using LLMs to extract data,
-classify it, and act on it**. Everything runs on your own machine: no API keys,
-no data leaving the laptop.
+# Yunex Demo: reliable LLM pipelines, running locally
+
+Support material for a talk at the **Yunex hackathon** (Youth Innovation Exchange
+Program), held in **Quba, Azerbaijan, from 7 to 10 November 2026**. The talk is about
+**reliably using LLMs to extract data, classify it, and act on it**.
+
+The models run on your own machine, with no API keys, and your documents stay there.
+The network is only used to download the models, fetch 10-K filings from SEC EDGAR
+(which sends your `SEC_USER_AGENT`), and fetch prices from Yahoo Finance.
 
 | Piece | What it does |
 |---|---|
 | [Ollama](https://ollama.com) | serves `gemma4` for generation and `embeddinggemma-2` for embeddings |
-| [ChromaDB](https://trychroma.com) | vector store for the retrieval demo |
-| [Streamlit](https://streamlit.io) | the UI, one page per demo beat |
+| [ChromaDB](https://trychroma.com) | vector store for the filings |
+| [Streamlit](https://streamlit.io) | the UI, one page per step of the talk |
 
-> **Status: all pages built.** The stack comes up and the **Stack Health** page
-> verifies it end to end. The other pages build up from a **Bare chatbot** to an
-> **Agent** that researches SEC filings and proposes trades behind guards.
+## What the demo shows
 
----
+Each page adds one technique, building from a bare model to a guarded agent.
 
-## Indexing SEC filings
+| Page | What it shows | Try this |
+|---|---|---|
+| **Stack Health** | Every service is up, and embedding, storing and querying work together | *Run checks* |
+| **Bare chatbot** | The model with only a system prompt: the baseline | Ask it something it can't know |
+| **One-off** | A schema enforced by Ollama, defences against prompt injection, and a check that values appear in the document | Upload a PDF from `example_docs/one_off/`; each hides an instruction in its text layer |
+| **Workflow** | A fixed path: classify, route, extract, validate, load. The model fills in steps and the code decides | *Load sample inbox* |
+| **Embedding search** | Search a real 10-K by meaning, with no LLM generating anything | Needs filings indexed |
+| **Agent** | The model picks the tools, code guards every call, and a human approves trades | Needs filings indexed |
 
-The **Embedding search** and **Agent** pages search 10-K filings fetched from SEC
-EDGAR. The SEC asks automated clients to declare who they are, so add your own name and a
-real address to `.env`, which is gitignored:
+## Quick start
+
+You need [Docker](https://docs.docker.com/get-docker/) with Compose, and `make`. On
+native Windows, without `make`, see [Windows](#windows).
+
+**1. Clone the repo.**
+
+```bash
+git clone https://github.com/jpedropereira/yunex_demo.git
+cd yunex_demo
+```
+
+**2. Start the stack with the command for your hardware.** All three run the same app
+and differ only in where inference runs. The first run downloads about 4.6 GB of models.
+
+| Your machine | Command | Ollama runs | One-time setup |
+|---|---|---|---|
+| **NVIDIA GPU**, Linux or Windows/WSL2 (preferred) | `make up-gpu` | in a container | Linux: [install the toolkit](#linux--nvidia) |
+| **Apple Silicon Mac** | `make up-external` | on the host | [install Ollama and pull the models](#macos) |
+| **No GPU** | `make up` | in a container | none |
+
+Use the GPU if you have one: a workflow makes several LLM calls in a row, so slow calls
+add up quickly.
+
+**3. Check it.** Open <http://localhost:8501> and run **Stack Health**, or run
+`make health` in a terminal. Without the NVIDIA toolkit, `make up-gpu` warns and falls
+back to CPU, so check the *Acceleration* row, which reports what Ollama really loaded.
+
+**4. Index the filings.** The Embedding search and Agent pages need them. The SEC asks
+automated clients to say who they are, so add your name and a real address to a `.env`
+file in the repo root (it is gitignored):
 
 ```bash
 SEC_USER_AGENT="Your Name you@example.com"
 ```
 
-Then restart the stack with `make up`, because the app reads this when its
-container starts, and index before the talk:
+Then **re-run the command from step 2**, so the app picks up the value, and index:
 
 ```bash
 make index-all    # the latest 10-K of NVIDIA, Apple, Microsoft, Alphabet and Amazon
-make index-nvda   # just NVIDIA
 ```
 
-The page offers the same five as one-click buttons, and takes a pasted EDGAR URL
-from those companies only. Each company keeps one 10-K: a newer one replaces the
-older, and an older one is refused. Indexing twice is safe: a filing that is
-already there is neither fetched nor embedded again. Searching needs no
-`SEC_USER_AGENT`, only indexing a new filing.
+Re-run the same command rather than plain `make up` whenever you edit `.env`: `make up`
+would move a GPU or host Ollama setup onto CPU in a container.
 
-Citations use the page number printed in the filing, which is stored when a filing
-is indexed. An index made by an older version has to be rebuilt, or the Embedding
-search page says it can't read it and searches fail with an error like
-`'printed_page'`. `make clean` also deletes the models, so use `make reindex`, which
-rebuilds beside the current index and only swaps if all five filings succeed.
+## Before the talk
 
-## The Agent page
+Do this on good wifi, before you reach the venue:
 
-The **Agent** page needs those filings indexed, and fetches prices from Yahoo
-Finance when it opens. Yahoo is unofficial, so the last good prices are kept in the
-`agent_data` volume and used, labelled as cached, if it fails. With neither, research
-still works and trading is disabled. The portfolio lives in the same volume, and
-**Reset portfolio** restores it.
+1. Run your `up` command, so the models are downloaded.
+2. Run `make index-all`.
+3. Open the **Agent** page once. It saves a copy of the prices and lists the indexed filings.
+4. Run `make warm`, so the first call on stage isn't cold, and then `make health`.
 
-Searches don't hand whole pages to the agent. A separate model call copies the helpful
-sentences from each of the top pages, and code keeps only those really on the page, so
-each search adds a few seconds and comparing two companies still fits the context.
+Without internet, the app still runs and the filings can still be searched. The Agent
+uses the saved prices, labelled as cached. With no saved prices, research still works
+but trading is disabled. Indexing a new filing does need internet.
 
-If tool calling is unreliable on E2B, try the larger model. No code changes:
+Avoid `make clean` after this: it deletes the models, the filings, the portfolio and
+the saved prices.
 
-```bash
-make pull-e4b
-# then in .env: AGENT_MODEL=gemma4:e4b-it-qat, and restart with make up
-```
-
----
-
-## Quick start
-
-Pick the command matching your hardware. All three serve the same app and
-differ only in *where inference runs*.
-
-| Your machine | Command | One-time setup needed |
-|---|---|---|
-| **NVIDIA GPU** — Linux or Windows/WSL2 | `make up-gpu` | Linux only: [install the toolkit](#linux--nvidia) |
-| **Apple Silicon Mac** | `make up-external` | [`brew install ollama`](#macos) |
-| **No GPU**, or you just want it running | `make up` | none |
-
-**If you have an NVIDIA card, use `make up-gpu`.** GPU inference is far faster
-than CPU, and that gap compounds: a workflow makes several LLM calls back to
-back, so seconds of per-call latency become tens of seconds of dead air on
-stage. Prefer it whenever it's available to you.
-
-> **`make up-gpu` is a request, not a guarantee.** Without
-> `nvidia-container-toolkit` on the host it detects the problem, warns, and
-> falls back to CPU — you get a working stack with no speedup. **Confirm it
-> actually engaged** via the *Acceleration* row on Stack Health, which reports
-> what Ollama really loaded onto the device rather than what you asked for.
-> See [Linux + NVIDIA](#linux--nvidia) for the one-time install.
-
-Then open <http://localhost:8501> and run **Stack Health** first.
-
-First run downloads **~4.6 GB** of model weights, so give it time on slow wifi.
-Weights persist in a Docker volume, so later starts are fast.
-
-Plain Compose works too (`docker compose up -d`), and is the fallback where
-`make` isn't available, such as native Windows. The Makefile is worth
-preferring for two things Compose can't express: the GPU fallback above, and
-running the model pull in the **foreground**, so you see download progress and
-"Ready" means the models are genuinely present. Everything else in it is
-convenience — `make help` lists the lot.
-
----
-
-## Three ways to run
-
-The app only ever reads `OLLAMA_HOST`. The profiles differ in *where Ollama
-lives*, and nothing else — same image, same code.
-
-| Command | Ollama runs | GPU | Use when |
-|---|---|---|---|
-| `make up-gpu` | container | **yes** (NVIDIA) | **preferred** — Linux with the toolkit, or Windows/WSL2 |
-| `make up-external` | on the host | **yes** | **macOS**, or you already run Ollama natively |
-| `make up` (or `docker compose up -d`) | container | no | no GPU available; zero host setup |
+## Platform setup
 
 ### Linux + NVIDIA
 
-Docker cannot see the GPU until the container toolkit is installed. This is a
-one-time host change:
+Docker can't see the GPU until the container toolkit is installed. This is a one-time
+change on the host:
 
 ```bash
 curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
@@ -131,259 +110,164 @@ sudo nvidia-ctk runtime configure --runtime=docker
 sudo systemctl restart docker
 ```
 
-Verify it took:
+Check that it worked, then run `make up-gpu`:
 
 ```bash
 docker run --rm --gpus all ubuntu nvidia-smi
 ```
 
-Then `make up-gpu`. **If the toolkit is missing, `make up-gpu` still starts but
-silently falls back to CPU** — the *Acceleration* row on Stack Health reports
-what Ollama actually loaded onto the device, so check there rather than trusting
-the command you ran.
-
 ### macOS
 
-Docker on macOS has **no route to the Apple Silicon GPU**, so a containerised
-Ollama is permanently CPU-only there. Run Ollama natively instead:
+Docker on macOS has no route to the Apple Silicon GPU, so run Ollama natively:
 
 ```bash
 brew install ollama
-OLLAMA_HOST=0.0.0.0:11434 ollama serve   # in its own terminal -- see note below
+OLLAMA_HOST=0.0.0.0:11434 ollama serve   # in its own terminal
 ollama pull gemma4:e2b-it-qat
 ollama pull embeddinggemma-2:270m
-make up-external                         # Chroma + Streamlit in Docker, Ollama on the host
+make up-external                         # Chroma and Streamlit in Docker, Ollama on the host
 ```
 
-`OLLAMA_HOST=0.0.0.0:11434` matters. Ollama binds to `127.0.0.1` by default,
-and `host.docker.internal` reaches the host on a gateway address rather than
-loopback — so a default-bound Ollama refuses the container's connection. The
-same applies to a native Ollama on Windows. (The `external` profile was
-verified on Linux, where the container Ollama already published on `0.0.0.0`;
-the loopback case is the one to watch for on Docker Desktop.)
+Ollama binds to `127.0.0.1` by default, which refuses connections from containers, so
+`OLLAMA_HOST=0.0.0.0:11434` is required. The same applies to a native Ollama on Windows.
+The `external` profile was verified on Linux, so watch for this on Docker Desktop.
+
+Pull models with `ollama pull` on this setup. `make pull` and `make pull-e4b` use the
+containerised Ollama.
 
 ### Windows
 
-**Use the WSL2 backend** (Docker Desktop's default). Inside a WSL2 shell
-everything works as on Linux, `make` included, and `make up-gpu` gets the GPU
-from the host NVIDIA driver alone — no in-container toolkit install needed.
+**Use the WSL2 backend** (Docker Desktop's default). In a WSL2 shell everything works
+as on Linux, and `make up-gpu` gets the GPU from the host NVIDIA driver alone.
 
-From **native PowerShell or cmd** the stack still runs, but the Makefile does
-not: it needs GNU `make` plus `grep`/`awk`, and `docker/preflight-gpu.sh` needs
-a POSIX shell. Use Compose directly:
+In native PowerShell or cmd the Makefile doesn't work, so use Compose directly:
 
 ```powershell
-docker compose up -d                                        # CPU
-docker compose -f compose.yaml -f compose.gpu.yaml up -d     # NVIDIA
+docker compose up -d                                                 # CPU
+docker compose -f compose.yaml -f compose.gpu.yaml up -d             # NVIDIA
+docker compose exec -T app python -m yunex_demo.health               # same as make health
+docker compose exec -T app python -m yunex_demo.sec.ingest --all     # same as make index-all
 ```
 
-The GPU variant skips the preflight check, so if `nvidia-container-toolkit`
-isn't available you'll get Docker's raw
-`could not select device driver "nvidia"` error instead of an automatic CPU
-fallback.
+The NVIDIA command skips the Makefile's check, so without the toolkit you get
+`could not select device driver "nvidia"` instead of a fallback to CPU.
 
-`.gitattributes` forces LF checkout on Windows. Don't remove it: `docker/*.sh`
-is bind-mounted into Linux containers and run by `/bin/sh`, and with CRLF
-endings `set -eu` becomes `set -eu<CR>`, so provisioning dies with
-`set: Illegal option -` and no models get pulled.
+## Hardware and models
 
----
+The defaults target a **16 GB laptop**. The working set is about 6.5 GB, including
+Chroma and Streamlit.
 
-## Hardware
-
-Defaults target a **16 GB laptop**:
-
-| | Size | Notes |
+| Model | Size | Notes |
 |---|---|---|
 | `gemma4:e2b-it-qat` | 4.3 GB | "effective 2B", built for edge devices, native function calling |
-| `embeddinggemma-2:270m` | 304 MB | 768-dim, 8K context |
+| `embeddinggemma-2:270m` | 304 MB | 768 dimensions, 8K context |
 
-Working set is roughly 6.5 GB with Chroma and Streamlit included.
-
-**On an 8 GB machine**, drop to the 1B model in `.env`:
+**On an 8 GB machine**, use the 1B model by adding this to `.env`:
 
 ```bash
 MODEL_MAIN=gemma3:1b-it-qat
 ```
 
-### CPU is a usable fallback — and that is part of the point
+**The Agent page can't use this model**: Ollama rejects its tool calls with
+`does not support tools`. So it stays on `AGENT_MODEL`, which is still downloaded (4.3 GB)
+and hasn't been tested on 8 GB. To skip that download and go without the Agent page, also
+set `AGENT_MODEL=gemma3:1b-it-qat`.
 
-Use a GPU if you have one. But CPU stays viable, which is what makes the demo
-portable to any attendee's laptop: schema-constrained extraction emits only
-~100–250 output tokens, so the slow path is slow-but-tolerable rather than
-unusable. Measured with `make health` on this stack:
+**CPU works too**, which lets the demo run on any attendee's laptop. Schema-constrained
+extraction only produces about 100–250 tokens. Measured with `make health`:
 
 | Hardware | Throughput | ~200-token extraction |
 |---|---|---|
 | i7-13700K, 24 threads, CPU only | **42 tok/s** | ~5 s |
 | typical 8-core laptop CPU (estimated) | ~12–15 tok/s | ~15 s |
 
-These are CPU-only figures, and they are the *floor* — a GPU run is
-substantially quicker. Run `make health` on your own machine for a real number
-rather than trusting any estimate here; the *Generation speed* row gives you
-tok/s and *Acceleration* tells you which path you actually got.
+Run `make health` for the real number on your machine. Three settings keep CPU presentable:
 
-The infrastructure leans into the slow case so CPU stays presentable:
+- `OLLAMA_KEEP_ALIVE=-1`: weights never unload during the talk.
+- `make warm`: preloads the chat and embedding models.
+- `OLLAMA_NUM_CTX=8192`: the model's 128K window would waste memory for no benefit here.
 
-- `OLLAMA_KEEP_ALIVE=-1` — weights never unload mid-presentation.
-- `make warm` — preloads both models so the first on-stage call isn't cold.
-- `OLLAMA_NUM_CTX=8192` — the model's 128K window would blow an 8 GB card's KV
-  cache and waste RAM for no demo benefit.
+## Filings and the Agent page
 
----
+**Filings.** Each company keeps one 10-K: a newer one replaces the older, and an older
+one is refused. Indexing twice is safe, because a filing already there is skipped. The
+Embedding search page offers the same five companies as buttons, and accepts a pasted
+EDGAR URL from those companies only. Searching doesn't need `SEC_USER_AGENT`.
+
+**Prices** come from Yahoo Finance when the page opens. Yahoo is unofficial, so the last
+good prices are kept in the `agent_data` volume, with the portfolio. **Reset portfolio**
+restores the starting portfolio.
+
+**Searches** don't hand whole pages to the agent. A separate model call copies the
+helpful sentences from each top page, and code keeps only those really on the page. Each
+search takes a few seconds longer, and comparing two companies still fits the context.
+
+**If tool calling is unreliable on E2B**, try the larger 6.1 GB model, with no code
+changes: set `AGENT_MODEL=gemma4:e4b-it-qat` in `.env` and re-run your `up` command, which
+downloads it. On macOS, run `ollama pull gemma4:e4b-it-qat` first.
 
 ## Configuration
 
-Everything is env-driven through a single `Settings` object
-(`src/yunex_demo/config.py`). The stack boots with **no `.env` at all** — the
-committed defaults match `.env.example`. Copy it to `.env` to override:
+Settings come from environment variables, through `src/yunex_demo/config.py`. The stack
+runs with no `.env` at all, and `.env.example` lists every option.
 
-```bash
-cp .env.example .env
-```
+If you copy `.env.example` to `.env`, replace the placeholder `SEC_USER_AGENT`, or it is
+sent to the SEC as is.
 
-### Ports: two different numbers for the same service
+### Ports
 
-Each service has an **inside** port (what it listens on within the compose
-network, where the app reaches it) and a **published** port (what's exposed on
-your machine). For Chroma these deliberately differ:
-
-| Service | From your host | From inside the network | Why |
+| Service | From your machine | Inside the network | Change the host port with |
 |---|---|---|---|
-| Streamlit | `http://localhost:8501` | — | |
-| **ChromaDB** | `http://localhost:8100` | `chroma:8000` | host `8000` is the most contested port on a dev machine |
-| Ollama | `http://localhost:11434` | `ollama:11434` | |
+| Streamlit | `http://localhost:8501` | | `APP_PUBLISHED_PORT` |
+| ChromaDB | `http://localhost:8100` | `chroma:8000` | `CHROMA_PUBLISHED_PORT` |
+| Ollama | `http://localhost:11434` | `ollama:11434` | `OLLAMA_PUBLISHED_PORT` |
 
-So Chroma **is** on 8000 — just not on *your* 8000. Reach it from the host at
-<http://localhost:8100> (e.g. `curl localhost:8100/api/v2/heartbeat`); the app,
-`make health`, and the Stack Health page all go through the network and need no
-change either way. `make test-live` runs from the host, which is why it passes
-`CHROMA_PORT=8100` explicitly.
-
-Both sides are configurable, but they are **not interchangeable**:
-
-| Variable | Default | Which side |
-|---|---|---|
-| `APP_PUBLISHED_PORT` | `8501` | host → Streamlit |
-| `CHROMA_PUBLISHED_PORT` | `8100` | host → Chroma |
-| `OLLAMA_PUBLISHED_PORT` | `11434` | host → Ollama |
-| `CHROMA_PORT` | `8000` | **app → Chroma, inside the network** |
-
-> Don't "fix" a host collision by changing `CHROMA_PORT`. That's the port the
-> app dials *inside* the network, where nothing else competes for it — setting
-> it to `8100` points the app at a port no container is listening on. Change
-> `CHROMA_PUBLISHED_PORT` instead, which only affects host access.
-
----
+Chroma uses 8100 on your machine because 8000 is so often taken. If a host port
+collides, change its `*_PUBLISHED_PORT`. **Don't change `CHROMA_PORT`**: it is the port
+the app uses inside the network, where Chroma always listens on 8000.
 
 ## Commands
 
+`make help` prints this list too.
+
 ```
 make up-gpu        Start with NVIDIA acceleration (preferred, if you have a card)
-make up-external   Start against a host Ollama (macOS)
+make up-external   Start against an Ollama on the host (macOS)
 make up            Start on CPU (works anywhere, no host setup)
-make pull          Provision models ahead of time — do this before the event
-make warm          Load models into memory before presenting
-make health        Run the full stack check headlessly; non-zero exit on failure
-make logs          Tail all service logs
-make ps            Service status
-make down          Stop, keeping models and vector data
-make clean         Stop and delete volumes (re-downloads models)
-make lint          Format and lint
-make test          Unit tests (no running stack needed; live checks self-skip)
-make test-live     Tests against the running stack, via its published ports
+make pull          Download the models ahead of time (CPU setup; the up commands above also do this, except up-external)
+make pull-e4b      Download the larger Agent model (container Ollama only)
+make index-all     Index the latest 10-K of all five companies; skips those already there
+make index-nvda    Index only NVIDIA's 10-K
+make reindex       Rebuild the index from the SEC; keeps the old one if any filing fails
+make warm          Load the models into memory before presenting
+make health        Run the stack checks in the terminal; non-zero exit on failure
+make logs          Follow the logs of all services
+make ps            Show service status
+make down          Stop, keeping models and data
+make clean         Stop and delete all volumes: models, filings, portfolio and saved prices
+make lint          Format and lint (needs uv)
+make test          Unit tests, with no running stack needed (needs uv)
+make test-live     Tests against the running stack (needs uv)
 ```
-
-`make health` runs the same checks as the Stack Health page, so you can verify
-the stack backstage without opening a browser:
-
-```
-[PASS] Ollama                        v0.40.13, 2 model(s) installed      (0.04s)
-[PASS] ChromaDB                      reachable (API v1.0.0), 0 collection(s)
-[PASS] Acceleration                  CPU -- no layers offloaded
-[PASS] Generation speed              41.7 tok/s (64 tokens in 1.53s)
-[PASS] Embed/store/query round trip  2 docs stored, 768-dim vectors
-```
-
-The round-trip check is the important one: it embeds through Ollama, writes to
-Chroma, queries it back, and asserts the nearest neighbour is correct. If it
-passes, the whole chain is genuinely wired up.
-
----
-
-## Verifying the setup
-
-### The stack
-
-```bash
-make health      # all five checks; exits non-zero on failure
-make test-live   # 14 tests against the running stack
-```
-
-Or open <http://localhost:8501> → **Stack Health** → *Run checks*. Watch the
-**Embed/store/query round trip** row: it's the only check that proves Ollama,
-the embedder, and Chroma work *together* rather than just being individually
-reachable.
-
-To prove it works the way a fresh clone would experience it:
-
-```bash
-make clean && make up    # deletes volumes, re-downloads ~4.6GB, ~2 min
-make health
-```
-
-### The `.env` deny rule
-
-This one needs a **fresh Claude Code session** — permission config loads at
-session start, so the session that wrote the rule cannot verify it.
-
-```bash
-printf 'DENY_RULE_CANARY=this-is-not-a-real-secret\n' > .env
-```
-
-Then start a new `claude` session in this directory and try all three:
-
-| Ask | Expected |
-|---|---|
-| "read .env" | **blocked** by permissions |
-| "grep for DENY_RULE_CANARY" | **blocked** |
-| "read .env.example" | **works**, contents returned |
-
-Pass means the canary value never appears in a reply. `/permissions` lists the
-loaded rules if you want a quicker sanity check. Delete the `.env` afterwards.
-
-Two things that look like failures but aren't:
-
-- **`cat .env` via Bash is not blocked, by design.** It's the most natural way
-  to try testing this and it will succeed. A path-glob rule on `Read`/`Grep`
-  can't reliably separate `cat .env` from safe shell commands, so only those two
-  tools are covered.
-- **The `.env` must be inside the project tree.** The glob resolves relative to
-  the working directory, so one in `/tmp` won't match even with a correct rule —
-  indistinguishable from the rule not working.
-
----
 
 ## Troubleshooting
 
-Symptoms seen while building this, and what each actually means.
-
 | Symptom | Cause | Fix |
 |---|---|---|
-| Stack Health: `missing: gemma4:...` | `model-init` hasn't finished or failed | `make pull`. Briefly expected after a bare `docker compose up`, which pulls concurrently with the app — `make up` blocks until it's done |
-| `model-init: set: Illegal option -` | CRLF line endings on `docker/*.sh` | `.gitattributes` was removed or git forces CRLF. `git config core.autocrlf false`, then re-checkout |
-| `Bind for 0.0.0.0:8000 failed: port is already allocated` | another service owns that host port | set `CHROMA_PUBLISHED_PORT` (or `APP_`/`OLLAMA_`) in `.env` |
-| `curl localhost:8000` to Chroma refuses, or hits something else entirely | Chroma is published on **8100**, not 8000 | use <http://localhost:8100>. See [Ports](#ports-two-different-numbers-for-the-same-service) |
-| App can't reach Chroma after an `.env` edit | `CHROMA_PORT` changed instead of `CHROMA_PUBLISHED_PORT` | `CHROMA_PORT` must stay `8000` — it's the in-network port |
-| `could not select device driver "nvidia"` | `nvidia-container-toolkit` missing | `make up-gpu` falls back to CPU automatically; raw `docker compose -f ... gpu.yaml` does not |
-| Acceleration row says **CPU** but you ran `up-gpu` | the toolkit is missing and it fell back | expected — the row reports what Ollama really loaded, not the profile you asked for. See [Linux + NVIDIA](#linux--nvidia) |
-| `external` profile: `Connection refused` | host Ollama bound to `127.0.0.1` | start it as `OLLAMA_HOST=0.0.0.0:11434 ollama serve` |
-| `time: missing unit in duration "-1"` | `OLLAMA_KEEP_ALIVE` set to a non-numeric string | use seconds (`-1`, `300`) or a Go duration (`5m`) |
-| Generation speed check fails, "too few tokens" | the model stopped early | a measurement guard, not a stack failure — a figure from <10 tokens isn't meaningful |
-| Everything works but feels slow | CPU inference | `make warm` before presenting; on 8GB set `MODEL_MAIN=gemma3:1b-it-qat`. See [CPU is slow but workable](#cpu-is-a-usable-fallback--and-that-is-part-of-the-point) |
-| Page edits don't show up | edited outside the bind mount | only `./src` is mounted; anything else needs a rebuild |
-
----
+| Stack Health: `missing: gemma4:...` | The model isn't downloaded, or a bare `docker compose up` is still pulling it | Wait, or re-run your `up` command. On macOS use `ollama pull` |
+| Agent page: `does not support tools` | The model has no tool calling, such as `gemma3:1b-it-qat` | Set `AGENT_MODEL` to a `gemma4` model, or use the other pages |
+| Embedding search can't read the index, or searches fail with `'printed_page'` | The index was made by an older version | `make reindex`. Don't use `make clean`, which also deletes the models |
+| Acceleration row says **CPU** after `make up-gpu` | The toolkit is missing, so it fell back to CPU | See [Linux + NVIDIA](#linux--nvidia) |
+| `could not select device driver "nvidia"` | The toolkit is missing and you ran raw `docker compose` | Install it, or use `make up-gpu`, which falls back to CPU |
+| `make up-external`: `Connection refused` | The host Ollama is bound to `127.0.0.1` | Start it with `OLLAMA_HOST=0.0.0.0:11434 ollama serve` |
+| `Bind for 0.0.0.0:... failed: port is already allocated` | Something else owns that host port | Set the matching `*_PUBLISHED_PORT` in `.env` |
+| `curl localhost:8000` to Chroma fails | Chroma is on **8100** on your machine | Use <http://localhost:8100> |
+| App can't reach Chroma after editing `.env` | `CHROMA_PORT` was changed | Set it back to `8000`. See [Ports](#ports) |
+| `model-init: set: Illegal option -` | CRLF line endings on `docker/*.sh` | `git config core.autocrlf false`, then check the files out again |
+| `time: missing unit in duration "-1"` | `OLLAMA_KEEP_ALIVE` is a non-numeric string | Use seconds (`-1`, `300`) or a Go duration (`5m`) |
+| Generation speed: "too few tokens" | The model stopped early | Run it again. Under 10 tokens gives no meaningful speed, so this isn't a stack failure |
+| Works, but slowly | CPU inference | `make warm` before presenting. See [Hardware and models](#hardware-and-models) |
+| Code edits don't show up | Only `./src` is mounted into the container | Rebuild by re-running your `up` command |
 
 ## Layout
 
@@ -391,99 +275,19 @@ Symptoms seen while building this, and what each actually means.
 compose.yaml                 base stack (CPU default)
 compose.gpu.yaml             NVIDIA device reservation
 compose.external.yaml        host Ollama instead of the container
-docker/app.Dockerfile        uv-based Streamlit image
-docker/pull-models.sh        idempotent model provisioning
-src/yunex_demo/config.py     single source of truth for settings
-src/yunex_demo/health.py     stack checks (page + CLI share these)
-src/yunex_demo/chat.py       bare-model chat call (Bare chatbot page)
-src/yunex_demo/warm.py       model preloading
-src/yunex_demo/ui/           Streamlit pages
+docker/                      app image, model download, GPU check
+example_docs/                sample PDFs for the One-off and Workflow pages
+src/yunex_demo/
+  config.py                  single source of truth for settings
+  health.py                  stack checks (shared by the page and make health)
+  warm.py                    model preloading
+  chat.py                    Bare chatbot
+  extract.py                 One-off
+  workflow/                  Workflow: pipeline, schemas, validators, database
+  sec/                       Embedding search: fetch, split, embed, query
+  agent/                     Agent: loop, tools, guards, portfolio, prices
+  ui/                        Streamlit home page and pages
+tests/                       test suite
 ```
 
----
-
-## Development setup
-
-```bash
-uv sync --all-groups
-uv run pre-commit install --hook-type pre-commit --hook-type pre-push
-make test
-```
-
-`./src` is bind-mounted into the app container, so editing a page and
-refreshing the browser is enough — no rebuild.
-
-### Hooks
-
-Two stages, from `.pre-commit-config.yaml`:
-
-| Stage | Runs |
-|---|---|
-| **pre-commit** | whitespace/EOF/YAML/JSON fixers, `ruff check --fix`, `ruff format`, `detect-secrets`, `pytest` |
-| **pre-push** | `pytest` again, as a last gate before code leaves the machine |
-
-`ruff` stands in for black + flake8 + isort + autoflake + pycln: its `E`/`F`
-rules cover flake8 at the same 100-character limit, `I` covers isort, `F401`
-covers the unused-import strippers, and `ruff format` covers black. There is
-deliberately **no `.flake8` file** — ruff's config in `pyproject.toml` would
-silently shadow it, leaving a config that looks live but isn't.
-
-Rules live only in `pyproject.toml` (`[tool.ruff]`), and the hooks carry no
-inline rule args, so there is one source of truth.
-
-The test suite is ~0.7 s offline, so both stages run the whole thing rather
-than using a `pytest-testmon` fast path — scoping it would add a dependency and
-a cache file to save nothing. Worth revisiting if the suite grows.
-
-### Secret scanning
-
-`detect-secrets` runs on every commit (not just on push — a leaked credential
-gets worse the longer it is out there). It compares against
-`.secrets.baseline`, which is committed and contains hashes, never the secrets
-themselves. The current baseline has **no findings**.
-
-If the hook flags something new:
-
-```bash
-uv run detect-secrets scan --baseline .secrets.baseline   # refresh
-uv run detect-secrets audit .secrets.baseline             # triage each finding
-```
-
-The audit step is interactive and needs human judgment about what is actually
-sensitive — don't regenerate the baseline just to silence the hook, since an
-unaudited baseline means the scanner is quietly passing over real secrets.
-
-### Tests
-
-```bash
-make test        # no stack needed; the live-stack checks skip themselves
-make test-live   # against a running stack, via its published ports
-```
-
-`tests/test_pages.py` executes every Streamlit page through `AppTest`. HTTP 200
-from the server proves nothing — pages run per session over a websocket, so a
-bad `st.*` call only surfaces when the script actually renders.
-
-### CI
-
-`.github/workflows/ci.yml` runs on pushes to `main` and on every pull request.
-It invokes the *same* `.pre-commit-config.yaml` via `pre-commit/action` rather
-than re-declaring lint rules, so CI and local hooks cannot disagree about what
-passing means — local hooks only protect contributors who ran
-`pre-commit install` and never passed `--no-verify`.
-
-CI starts no service containers: the live-stack checks self-skip, so it
-verifies lint, config, and page rendering without pulling 4.6 GB of models.
-
-### `.env` protection
-
-`.claude/settings.json` is committed and denies Claude Code's `Read` and `Grep`
-tools on real `.env` files while leaving `.env.example` readable. `Grep` matters
-as much as `Read` because it returns matched lines, so a search for a variable
-name could otherwise print its value.
-
-Scope, honestly: it blocks `Read`/`Grep` calls that name a `.env` path or glob.
-It does **not** block shell commands like `cat .env` — a path-glob permission
-rule can't reliably tell those from safe ones. It covers everyone who opens this
-repo with Claude Code, and complements (not replaces) a personal global rule in
-`~/.claude/settings.json`.
+To change the code or run the tests, see [CONTRIBUTING.md](CONTRIBUTING.md).
