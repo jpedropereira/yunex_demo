@@ -118,29 +118,80 @@ docker run --rm --gpus all ubuntu nvidia-smi
 
 ### macOS
 
-Docker on macOS has no route to the Apple Silicon GPU, so run Ollama natively:
+Docker on macOS has no route to the Apple Silicon GPU, so Ollama runs natively on the
+Mac, and Chroma and Streamlit run in Docker.
+
+**1. Install the tools** (needs [Homebrew](https://brew.sh); `make` ships with macOS's
+developer tools):
 
 ```bash
+brew install --cask docker   # Docker Desktop
 brew install ollama
-OLLAMA_HOST=0.0.0.0:11434 ollama serve   # in its own terminal
-ollama pull gemma4:e2b-it-qat
-ollama pull embeddinggemma-2:270m
-make up-external                         # Chroma and Streamlit in Docker, Ollama on the host
+brew install uv              # only for make lint / make test
+```
+
+**2. Start Docker Desktop once.** Run `open -a Docker`, accept the prompts, and wait
+until the menu-bar whale says it is running. Check with `docker info`. Until then,
+`make` fails with `failed to connect to the docker API`.
+
+**3. Start Ollama in its own terminal tab** and leave it running:
+
+```bash
+brew services stop ollama                 # in case a background Ollama already holds the port
+OLLAMA_HOST=0.0.0.0:11434 ollama serve
 ```
 
 Ollama binds to `127.0.0.1` by default, which refuses connections from containers, so
 `OLLAMA_HOST=0.0.0.0:11434` is required. The same applies to a native Ollama on Windows.
-The `external` profile was verified on Linux, so watch for this on Docker Desktop.
 
-Pull models with `ollama pull` on this setup. `make pull` and `make pull-e4b` use the
-containerised Ollama.
+**4. In a second tab, pull both models.** You need both: one generates text, the other
+makes the embeddings for search.
+
+```bash
+ollama pull gemma4:e2b-it-qat
+ollama pull embeddinggemma-2:270m
+ollama list                      # must show both models before you continue
+```
+
+**5. Start the stack and check it:**
+
+```bash
+make up-external
+make health
+```
+
+`make health` should pass every row. If it reports `missing: ...` or `model ... not found`,
+you skipped a pull in step 4. Pull models with `ollama pull` on this setup:
+`make pull` and `make pull-e4b` use the containerised Ollama.
+
+Then continue with step 4 of the [Quick start](#quick-start) to index the filings, using
+`make up-external` wherever it says "re-run the command from step 2". The `external`
+profile was verified on Linux; on Docker Desktop, see the macOS rows in
+[Troubleshooting](#troubleshooting) if something fails.
 
 ### Windows
 
 **Use the WSL2 backend** (Docker Desktop's default). In a WSL2 shell everything works
 as on Linux, and `make up-gpu` gets the GPU from the host NVIDIA driver alone.
 
-In native PowerShell or cmd the Makefile doesn't work, so use Compose directly:
+**Installing `make`.** Ubuntu on WSL2 may not include it. In the WSL2 shell, run:
+
+```bash
+sudo apt-get update && sudo apt-get install -y make
+make --version    # should print "GNU Make"
+```
+
+Clone the repo inside the WSL2 filesystem (for example in `~/yunex_demo`), not under
+`/mnt/c`. Windows line endings break the `docker/*.sh` scripts (see
+[Troubleshooting](#troubleshooting)), and `/mnt/c` is much slower.
+
+Native Windows has no `make` by default. You can install one with
+`winget install ezwinports.make` (or `choco install make`), but the Makefile calls shell
+scripts and POSIX commands, so some targets, such as `make up-gpu`, fail in PowerShell or
+cmd unless Git for Windows' `sh` is on your `PATH`. This path is untested here. WSL2 is
+the supported way.
+
+In native PowerShell or cmd without `make`, use Compose directly:
 
 ```powershell
 docker compose up -d                                                 # CPU
@@ -260,6 +311,9 @@ make test-live     Tests against the running stack (needs uv)
 | Acceleration row says **CPU** after `make up-gpu` | The toolkit is missing, so it fell back to CPU | See [Linux + NVIDIA](#linux--nvidia) |
 | `could not select device driver "nvidia"` | The toolkit is missing and you ran raw `docker compose` | Install it, or use `make up-gpu`, which falls back to CPU |
 | `make up-external`: `Connection refused` | The host Ollama is bound to `127.0.0.1` | Start it with `OLLAMA_HOST=0.0.0.0:11434 ollama serve` |
+| `make warm` or `make health`: `model '...' not found (status code: 404)` | That model was never pulled into the host Ollama (macOS) | `ollama pull <model>`, check with `ollama list`, then run it again |
+| macOS: `failed to connect to the docker API ... docker.sock` | Docker Desktop isn't running, or was never opened after installing | `open -a Docker`, finish the prompts, wait for it to say running, check with `docker info` |
+| macOS: `unknown shorthand flag: 'f' in -f` or `unknown command: docker compose` | The Compose plugin isn't registered (seen with a brew-only install) | Write `{"cliPluginsExtraDirs": ["/Applications/Docker.app/Contents/Resources/cli-plugins"]}` to `~/.docker/config.json`, then check `docker compose version` |
 | `Bind for 0.0.0.0:... failed: port is already allocated` | Something else owns that host port | Set the matching `*_PUBLISHED_PORT` in `.env` |
 | `curl localhost:8000` to Chroma fails | Chroma is on **8100** on your machine | Use <http://localhost:8100> |
 | App can't reach Chroma after editing `.env` | `CHROMA_PORT` was changed | Set it back to `8000`. See [Ports](#ports) |
